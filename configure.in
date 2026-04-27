@@ -121,6 +121,7 @@ if test "$debug" = "yes" ; then
 fi
 AC_SUBST(DEB_CFLAGS)
 
+
 AC_LIBTOOL_WIN32_DLL
 AC_LIBTOOL_DLOPEN
 AC_ARG_WITH(libtool,
@@ -743,6 +744,25 @@ if test "$anti_alias" != "no"; then
 		fi
 	fi
 fi
+
+dnl ---- fb-embed (downstream fork) ----
+dnl When enabled, the framebuffer backend skips opening /dev/fb0 and
+dnl /dev/input/event* and instead exposes embed entry points (declared
+dnl in uitoolkit/fb/ui_fb_embed.h, added in a later commit) for a host
+dnl application to push framebuffer storage and input events. Useful
+dnl for embedding mlterm into another runtime (e.g. JNI in a Java host).
+dnl See doc/en/README.fb-embed. Default off — the regular /dev/fb0 path
+dnl is used. Requires --with-gui=fb.
+AC_ARG_ENABLE(fb-embed,
+	[  --enable-fb-embed       fb backend renders to a host-supplied buffer @<:@default=disabled@:>@],
+	fb_embed=$enable_fb_embed, fb_embed="no")
+if test "$fb_embed" = "yes" ; then
+	if test "$gui" != "fb" ; then
+		AC_MSG_ERROR([--enable-fb-embed requires --with-gui=fb])
+	fi
+	FB_EMBED_CFLAGS="-DUSE_FB_EMBED"
+fi
+AC_SUBST(FB_EMBED_CFLAGS)
 
 AC_ARG_WITH(type_engines,
 	[  --with-type-engines@<:@=ARG@:>@ type engines (xcore, xft, cairo) @<:@default=xcore,xft,cairo@:>@],
