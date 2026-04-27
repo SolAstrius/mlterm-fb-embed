@@ -1026,7 +1026,14 @@ static void cmap_final(void);
 static int get_active_console(void);
 static int receive_stdin_key_event(void);
 
-#if defined(__FreeBSD__)
+#if defined(USE_FB_EMBED)
+/* Downstream fb-embed fork: the embed display backend substitutes
+ * for any host-OS backend. Same internal contract (open_display,
+ * receive_*_event, console_id, set_use_console_backscroll), but the
+ * pixel buffer + input pipes come from the embedding host instead
+ * of /dev/fb0 + /dev/input/event*. See doc/en/README.fb-embed. */
+#include "ui_display_embed.c"
+#elif defined(__FreeBSD__)
 #include "ui_display_freebsd.c"
 #elif defined(USE_GRF)
 #include "ui_display_x68kgrf.c"
@@ -1038,6 +1045,11 @@ static int receive_stdin_key_event(void);
 
 #ifndef __FreeBSD__
 
+#ifdef USE_FB_EMBED
+/* Embed mode has no host VT; pretend we're always on the active
+ * one so the console-switch detection below stays a no-op. */
+static int get_active_console(void) { return 0; }
+#else
 static int get_active_console(void) {
   struct vt_stat st;
 
@@ -1047,6 +1059,7 @@ static int get_active_console(void) {
 
   return st.v_active;
 }
+#endif
 
 static int receive_stdin_key_event(void) {
   u_char buf[6];
@@ -1466,10 +1479,14 @@ ui_display_t *ui_display_open(char *disp_name, u_int depth) {
       _disp.name = ":0.0";
     }
 
+#ifndef USE_FB_EMBED
+    /* Embed mode owns no host stdin — these touch the embedder's
+     * own terminal which is none of our business. */
     fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL, 0) | O_NONBLOCK);
 
     /* Hide the cursor of default console. */
     write(STDIN_FILENO, "\x1b[?25l", 6);
+#endif
   }
 
   return &_disp;
@@ -1504,8 +1521,11 @@ void ui_display_close_all(void) {
     free(_display.back_fb);
 #endif
 
+#ifndef USE_FB_EMBED
+    /* Embed mode never modified the host stdin — nothing to restore. */
     write(STDIN_FILENO, "\x1b[?25h", 6);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_tm);
+#endif
 
 #if defined(__FreeBSD__)
     ioctl(STDIN_FILENO, KDSKBMODE, K_XLATE);
@@ -1536,8 +1556,14 @@ void ui_display_close_all(void) {
       close(_display.fd);
     }
 
+#ifdef USE_FB_EMBED
+    /* Host owns the buffer — never mmap'd, no fb_fd to close. The
+     * embed file's pipes are closed by ui_fb_embed_detach(). */
+    _display.fb = _display.fb_base = NULL;
+#else
     munmap(_display.fb, _display.smem_len);
     close(_display.fb_fd);
+#endif
 
     free(_disp.roots);
 
