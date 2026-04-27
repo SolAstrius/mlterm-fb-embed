@@ -184,5 +184,5 @@ void ui_fb_embed_input(int type, int code, int value) {
 
 void ui_fb_embed_pump(void) {
   if (!_embed.attached) return;
-  ui_event_source_process();
+  ui_event_source_pump_once_nonblock();
 }

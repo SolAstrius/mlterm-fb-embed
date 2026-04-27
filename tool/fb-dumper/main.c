@@ -2,69 +2,52 @@
  *
  * fb-dumper — drive an embed-mode mlterm with a stream of VT bytes
  * and dump the resulting framebuffer as a PPM. Test harness for the
- * fb-embed fork: a known input → a binary-comparable output.
+ * fb-embed fork.
  *
- * Only built when configured with --enable-fb-embed. Links against
- * the same uitoolkit/fb objects mlterm-fb itself uses, plus vtemu.
+ * Strategy: spawn mlterm's standard main_loop (which sets up the
+ * screen manager, terminal, fonts, the works), passing -e <command>
+ * so the child program writes the VT stream we want rendered. Pump
+ * the event source ourselves N times via the embed API's
+ * non-blocking pump, then dump our buffer as PPM.
+ *
+ * Why -e instead of pushing bytes directly: mlterm's own init path
+ * creates the ui_screen + ui_window + display tree we need to
+ * actually render cells into the buffer. Skipping that init means
+ * re-implementing it. -e <cat> piping our input is far less code.
  *
  * Usage:
- *   fb-dumper [-c COLS] [-r ROWS] [-o OUT.ppm] [-f INPUT]
+ *   fb-dumper [-c COLS] [-r ROWS] [-o OUT.ppm] [-f INPUT.vt]
+ *             [-d MS] [-e CMD]
  *
- * If -f is omitted, reads VT bytes from stdin until EOF. If -o is
- * omitted, writes PPM to stdout. Defaults to 80x24 grid.
- *
- * Example — render the boot demo we used in the jexer prototype:
- *   printf '\033[2J\033[H\033[1;36mhello\033[0m\r\n' | \
- *     ./fb-dumper -o hello.ppm
- *
- * Example — diff embed-mode output against a golden capture:
- *   fb-dumper -f tests/inputs/colors.vt -o /tmp/out.ppm
- *   cmp /tmp/out.ppm tests/golden/colors.ppm
+ *   -c COLS    grid columns       (default 80)
+ *   -r ROWS    grid rows          (default 24)
+ *   -o PATH    output PPM path    (default stdout)
+ *   -f PATH    pipe this file's contents into a `cat` -e child
+ *              (mutually exclusive with -e)
+ *   -e CMD     command to run inside mlterm    (default: cat -)
+ *   -d MS      pump for this many milliseconds (default 250)
  */
 
 #include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <unistd.h>
 
-#include <vt_term.h>
-#include <vt_term_manager.h>
-
+#include "../../main/main_loop.h"
+#include "../../uitoolkit/ui_event_source.h"
+#include "../../uitoolkit/ui_screen_manager.h"
 #include "../../uitoolkit/fb/ui_fb_embed.h"
 
-#define DEFAULT_COLS 80
-#define DEFAULT_ROWS 24
-#define CELL_PX_W    8   /* matches uitoolkit/fb default pcf cell. */
-#define CELL_PX_H    16
+#define DEFAULT_COLS  80
+#define DEFAULT_ROWS  24
+#define CELL_PX_W     8
+#define CELL_PX_H     16
+#define DEFAULT_PUMP_MS 250
 
-static int read_all(FILE *fp, unsigned char **out_buf, size_t *out_len) {
-  size_t cap = 4096, len = 0;
-  unsigned char *buf = malloc(cap);
-  if (!buf) return -1;
-  for (;;) {
-    if (len == cap) {
-      cap *= 2;
-      unsigned char *nb = realloc(buf, cap);
-      if (!nb) { free(buf); return -1; }
-      buf = nb;
-    }
-    size_t n = fread(buf + len, 1, cap - len, fp);
-    len += n;
-    if (n == 0) {
-      if (feof(fp)) break;
-      free(buf);
-      return -1;
-    }
-  }
-  *out_buf = buf;
-  *out_len = len;
-  return 0;
-}
-
-/* PPM (P6) is the simplest "real" image format: ASCII header
- * followed by raw RGB triples. Every image viewer reads it; cmp(1)
- * works for byte-exact regression. */
+/* PPM (P6) writer — see README for format rationale. */
 static int write_ppm(FILE *fp, const uint32_t *pixels, int w, int h, int stride) {
   if (fprintf(fp, "P6\n%d %d\n255\n", w, h) < 0) return -1;
   for (int y = 0; y < h; ++y) {
@@ -84,20 +67,26 @@ static int write_ppm(FILE *fp, const uint32_t *pixels, int w, int h, int stride)
 int main(int argc, char *argv[]) {
   int cols = DEFAULT_COLS;
   int rows = DEFAULT_ROWS;
+  int pump_ms = DEFAULT_PUMP_MS;
   const char *out_path = NULL;
   const char *in_path = NULL;
+  const char *exec_cmd = NULL;
 
   int opt;
-  while ((opt = getopt(argc, argv, "c:r:o:f:h")) != -1) {
+  while ((opt = getopt(argc, argv, "c:r:o:f:e:d:h")) != -1) {
     switch (opt) {
       case 'c': cols = atoi(optarg); break;
       case 'r': rows = atoi(optarg); break;
       case 'o': out_path = optarg; break;
       case 'f': in_path = optarg; break;
+      case 'e': exec_cmd = optarg; break;
+      case 'd': pump_ms = atoi(optarg); break;
       case 'h':
       default:
-        fprintf(stderr, "usage: %s [-c COLS] [-r ROWS] [-o OUT.ppm] [-f INPUT.vt]\n",
-                argv[0]);
+        fprintf(stderr,
+            "usage: %s [-c COLS] [-r ROWS] [-o OUT.ppm]\n"
+            "          [-f INPUT.vt | -e CMD] [-d MS]\n",
+            argv[0]);
         return opt == 'h' ? 0 : 2;
     }
   }
@@ -105,57 +94,75 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "bad grid dimensions %dx%d\n", cols, rows);
     return 2;
   }
+  if (in_path && exec_cmd) {
+    fprintf(stderr, "-f and -e are mutually exclusive\n");
+    return 2;
+  }
 
+  /* Allocate + attach the host buffer before any uitoolkit call. */
   int width  = cols * CELL_PX_W;
   int height = rows * CELL_PX_H;
   uint32_t *buf = calloc((size_t)width * height, sizeof(uint32_t));
   if (!buf) { perror("calloc"); return 1; }
-
   if (ui_fb_embed_attach(buf, width, height, width) != 0) {
     fprintf(stderr, "ui_fb_embed_attach failed\n");
     return 1;
   }
 
-  /* Build a vt_term that owns the parser + cell grid. The fb
-   * backend's display layer (now reading our buffer) renders
-   * whatever this term holds. Argument order matches the prototype
-   * in vtemu/vt_term.h exactly; integer enums get zero values
-   * (= "default"), pointer args get NULL. */
-  vt_term_t *term = vt_term_new(
-      "xterm-256color", cols, rows,
-      /*tab_size=*/8, /*log_size=*/64,
-      /*encoding=*/0, /*is_auto_encoding=*/0,
-      /*use_auto_detect=*/0, /*logging_vt_seq=*/0,
-      /*policy=*/0, /*col_size_a=*/1,
-      /*use_char_combining=*/1, /*use_multi_col_char=*/1,
-      /*use_ctl=*/1, /*bidi_mode=*/0, /*bidi_separators=*/NULL,
-      /*use_dynamic_comb=*/0, /*bs_mode=*/0,
-      /*vertical_mode=*/0, /*use_local_echo=*/0,
-      /*win_name=*/NULL, /*icon_name=*/NULL,
-      /*use_ansi_colors=*/1, /*alt_color_mode=*/0,
-      /*use_ot_layout=*/0, /*cursor_style=*/0,
-      /*ignore_broadcasted_chars=*/0, /*use_locked_title=*/0);
-  if (!term) {
-    fprintf(stderr, "vt_term_new failed\n");
+  /* Build the argv we'll hand to main_loop_init. mlterm's option
+   * parser eats these; -e CMD spawns CMD inside the PTY. We always
+   * pass --geometry so the cell grid matches what we asked for. */
+  char geom[32];
+  snprintf(geom, sizeof(geom), "%dx%d", cols, rows);
+  /* Default child is `cat -` which echoes stdin → PTY → mlterm. */
+  const char *default_cat = "/bin/cat";
+  const char *e_arg = exec_cmd ? exec_cmd : default_cat;
+
+  /* If the user gave -f INPUT, redirect our stdin from that file
+   * before exec — `cat -` then dumps the file via the PTY. */
+  if (in_path) {
+    if (!freopen(in_path, "rb", stdin)) {
+      perror(in_path);
+      return 1;
+    }
+  }
+
+  char *ml_argv[] = {
+    (char *)"mlterm-fb-dumper",
+    (char *)"--geometry", geom,
+    (char *)"-e", (char *)e_arg,
+    NULL,
+  };
+  int ml_argc = (int)(sizeof(ml_argv) / sizeof(ml_argv[0])) - 1;
+
+  if (!main_loop_init(ml_argc, ml_argv)) {
+    fprintf(stderr, "main_loop_init failed\n");
     return 1;
   }
 
-  /* Slurp input bytes — file or stdin. */
-  unsigned char *script;
-  size_t script_len;
-  FILE *in = in_path ? fopen(in_path, "rb") : stdin;
-  if (!in) { perror(in_path); return 1; }
-  if (read_all(in, &script, &script_len) != 0) {
-    fprintf(stderr, "read failed\n");
+  /* main_loop_init prepares the screen manager but doesn't actually
+   * open any screens — that's the first thing main_loop_start does.
+   * We bypass main_loop_start (its blocking event loop is what we
+   * replaced with the embed pump) and call startup directly. */
+  if (ui_screen_manager_startup() == 0) {
+    fprintf(stderr, "ui_screen_manager_startup failed\n");
     return 1;
   }
-  if (in != stdin) fclose(in);
 
-  /* Push bytes into the parser, then drive one render iteration. */
-  vt_term_write(term, script, script_len);
-  ui_fb_embed_pump();
-
-  free(script);
+  /* Pump until the time budget runs out. Each iteration drains
+   * any data the child wrote, lets mlterm parse + render into our
+   * buffer. 1 ms sleep between pumps so we don't burn CPU and so
+   * the child has a chance to actually produce data. */
+  struct timeval start, now;
+  gettimeofday(&start, NULL);
+  for (;;) {
+    ui_fb_embed_pump();
+    gettimeofday(&now, NULL);
+    long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L +
+                      (now.tv_usec - start.tv_usec) / 1000L;
+    if (elapsed_ms >= pump_ms) break;
+    usleep(1000);
+  }
 
   /* Dump. */
   FILE *out = out_path ? fopen(out_path, "wb") : stdout;
@@ -166,7 +173,7 @@ int main(int argc, char *argv[]) {
   }
   if (out != stdout) fclose(out);
 
-  vt_term_destroy(term);
+  main_loop_final();
   ui_fb_embed_detach();
   free(buf);
   return 0;

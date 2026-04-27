@@ -22,12 +22,15 @@ CFLAGS = $(CFLAGS_LOCAL) @POBL_CFLAGS@ @MEF_CFLAGS@ @DEB_CFLAGS@ \
 
 # Link inputs: same shape as main/Makefile.in's fb mode. Static
 # archives produced by the in-tree builds, linked through libtool
-# so the libpobl/libmef shared-library handling works.
+# so the libpobl/libmef shared-library handling works. We pull in
+# main_loop.o + daemon.o from main/ since the dumper drives mlterm's
+# normal init path rather than rebuilding it.
 LMLTERM = ../../vtemu/libmlterm@TRUECOLOR_TAG@.a ../../vtemu/@LMLTERM_CORE@
 LUITK = ../../uitoolkit/libuitoolkit.a
-LIBS = $(LUITK) $(LMLTERM) @LMEF@ @LPOBL@ \
+LMAIN = ../../main/main_loop.o ../../main/daemon.o
+LIBS = $(LMAIN) $(LUITK) $(LMLTERM) @LMEF@ @LPOBL@ \
 	@MATH_LIBS@ @DL_LIBS_IM@ @DL_LIBS_SB@ @FT_LIBS@ @SOCK_LIBS@ \
-	@PTHREAD_LIB@
+	@PTHREAD_LIB@ @SSH2_LIBS_FOR_PROG@ @REGEX_LIBS@
 
 LIBTOOL_LINK = $(LIBTOOL) --mode=link $(CC) @LDFLAGS@
 
@@ -36,7 +39,7 @@ PROG = mlterm-fb-dumper
 
 all: $(PROG)
 
-$(PROG): $(OBJ) $(LMLTERM) $(LUITK)
+$(PROG): $(OBJ) $(LMLTERM) $(LUITK) $(LMAIN)
 	$(LIBTOOL_LINK) -o $(PROG) $(OBJ) $(LIBS)
 
 .SUFFIXES: .c.o

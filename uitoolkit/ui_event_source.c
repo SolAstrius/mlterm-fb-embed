@@ -305,6 +305,69 @@ void ui_event_source_final(void) {
 #endif
 }
 
+#if defined(USE_FB_EMBED) && !defined(NO_DISPLAY_FD)
+/* fb-embed (downstream fork) — non-blocking single-shot variant of
+ * the pump used by ui_fb_embed_pump(). The host's UI loop calls
+ * this on its own cadence; we must not block here. Drains ready
+ * PTY + display fds via a zero-timeout select, processes them,
+ * returns. No idle ticking, no key-repeat tracking — those are the
+ * job of the host's own loop in embed mode.
+ *
+ * This is a deliberately minimal port of receive_next_event() so
+ * the embed pump's behaviour is easy to reason about and the diff
+ * against upstream stays small. */
+static void receive_next_event_nonblock(void) {
+  fd_set read_fds;
+  struct timeval tval = { 0, 0 };
+  int maxfd = -1;
+  int ret;
+  u_int count;
+  ui_display_t **displays;
+  u_int num_displays;
+  vt_term_t **terms;
+  u_int num_terms;
+  int ptyfd;
+
+  FD_ZERO(&read_fds);
+  displays = ui_get_opened_displays(&num_displays);
+  for (count = 0; count < num_displays; count++) {
+    int xfd = ui_display_fd(displays[count]);
+    FD_SET(xfd, &read_fds);
+    if (xfd > maxfd) maxfd = xfd;
+  }
+  num_terms = vt_get_all_terms(&terms);
+  for (count = 0; count < num_terms; count++) {
+    ptyfd = vt_term_get_master_fd(terms[count]);
+    if (ptyfd >= 0) {
+      FD_SET(ptyfd, &read_fds);
+      if (ptyfd > maxfd) maxfd = ptyfd;
+      /* Drain any locally-buffered data (e.g. write-loopback)
+       * synchronously — select() won't see it. */
+      if (vt_term_is_sending_data(terms[count])) {
+        vt_term_parse_vt100_sequence(terms[count]);
+      }
+    }
+  }
+
+  if (maxfd < 0) return;
+  ret = select(maxfd + 1, &read_fds, NULL, NULL, &tval);
+  if (ret <= 0) return;
+
+  for (count = 0; count < num_displays; count++) {
+    if (FD_ISSET(ui_display_fd(displays[count]), &read_fds)) {
+      ui_display_receive_next_event(displays[count]);
+      displays = ui_get_opened_displays(&num_displays);
+    }
+  }
+  for (count = 0; count < num_terms; count++) {
+    ptyfd = vt_term_get_master_fd(terms[count]);
+    if (ptyfd >= 0 && FD_ISSET(ptyfd, &read_fds)) {
+      vt_term_parse_vt100_sequence(terms[count]);
+    }
+  }
+}
+#endif
+
 int ui_event_source_process(void) {
 #ifdef NO_DISPLAY_FD
   u_int num_displays;
@@ -416,3 +479,10 @@ void ui_event_source_remove_fd(int fd) {
   }
 #endif /* NO_DISPLAY_FD */
 }
+
+#if defined(USE_FB_EMBED) && !defined(NO_DISPLAY_FD)
+/* fb-embed: public entry point. See receive_next_event_nonblock above. */
+void ui_event_source_pump_once_nonblock(void) {
+  receive_next_event_nonblock();
+}
+#endif
