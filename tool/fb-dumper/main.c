@@ -109,28 +109,43 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  /* Build the argv we'll hand to main_loop_init. mlterm's option
-   * parser eats these; -e CMD spawns CMD inside the PTY. We always
-   * pass --geometry so the cell grid matches what we asked for. */
+  /* Build the argv we'll hand to main_loop_init. */
   char geom[32];
   snprintf(geom, sizeof(geom), "%dx%d", cols, rows);
-  /* Default child is `cat -` which echoes stdin → PTY → mlterm. */
-  const char *default_cat = "/bin/cat";
-  const char *e_arg = exec_cmd ? exec_cmd : default_cat;
 
-  /* If the user gave -f INPUT, redirect our stdin from that file
-   * before exec — `cat -` then dumps the file via the PTY. */
+  /* If the user gave -f INPUT, run `cat <path>` so cat opens the
+   * file directly. Piping our stdin to mlterm wouldn't reach the
+   * child — mlterm's PTY is the child's stdin, not ours.
+   *
+   * Default child writes a one-line greeting so an out-of-the-box
+   * `mlterm-fb-dumper -o foo.ppm` produces visible content rather
+   * than an empty terminal. */
+  const char *default_cmd = "printf '\\033[1;32mmlterm-fb-embed\\033[0m ready\\r\\n'";
+  const char *e_arg;
+  char *cat_buf = NULL;
   if (in_path) {
-    if (!freopen(in_path, "rb", stdin)) {
-      perror(in_path);
-      return 1;
-    }
+    size_t n = strlen("cat ") + strlen(in_path) + 1;
+    cat_buf = malloc(n);
+    if (!cat_buf) { perror("malloc"); return 1; }
+    snprintf(cat_buf, n, "cat %s", in_path);
+    e_arg = cat_buf;
+  } else if (exec_cmd) {
+    e_arg = exec_cmd;
+  } else {
+    e_arg = default_cmd;
   }
 
+  /* Suppress the in-window scrollbar (we're a one-shot capturer,
+   * not an interactive terminal) and force a black-on-white →
+   * white-on-black flip so the output looks like a real terminal
+   * rather than a printout. */
   char *ml_argv[] = {
     (char *)"mlterm-fb-dumper",
     (char *)"--geometry", geom,
-    (char *)"-e", (char *)e_arg,
+    (char *)"-fg",        (char *)"white",
+    (char *)"-bg",        (char *)"black",
+    (char *)"-sb",        (char *)"false",
+    (char *)"-e",         (char *)"/bin/sh", (char *)"-c", (char *)e_arg,
     NULL,
   };
   int ml_argc = (int)(sizeof(ml_argv) / sizeof(ml_argv[0])) - 1;
@@ -176,5 +191,6 @@ int main(int argc, char *argv[]) {
   main_loop_final();
   ui_fb_embed_detach();
   free(buf);
+  free(cat_buf);
   return 0;
 }
