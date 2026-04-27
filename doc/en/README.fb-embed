@@ -1,0 +1,89 @@
+comment -*- mode: text; tab-width:2; indent-tabs-mode:nil -*-
+
+mlterm-fb embed mode
+
+* What this fork is
+
+  This is a downstream fork of arakiken/mlterm that adds a "render to
+  a host-supplied buffer" mode to the framebuffer (`--with-gui=fb`)
+  backend. Upstream's fb backend opens /dev/fb0 and mmap()s the
+  kernel framebuffer; this fork extracts the buffer ownership behind
+  a small interface so the same rendering pipeline can drive a memory
+  buffer supplied by an embedding host (e.g. via JNI, a coroutine
+  driver, or another runtime).
+
+  Sixel and ReGIS support carry over unchanged — they're rendered by
+  the same uitoolkit/fb code path, so they "just work" against the
+  buffer-target backend the same way they work against /dev/fb0.
+
+  The fork's policy is to stay rebaseable on top of upstream/master.
+  Every commit on the `fb-embed` topic branch is one focused change
+  with a clear message; resyncing means `git fetch upstream && git
+  rebase upstream/master` and resolving any conflicts in the small
+  number of files we touch.
+
+* Scope
+
+  Things this fork DOES change:
+    - uitoolkit/fb/ui_display.c — the chokepoint where /dev/fb0 is
+      opened and mmap'd. Refactored so the actual buffer can come
+      from a host via a registered backend.
+    - uitoolkit/fb/ui_event_source.c — the loop that reads
+      /dev/input/eventN. Made externally drivable so a host can push
+      key/mouse events without owning the file descriptors.
+    - configure / configure.in — adds --enable-fb-embed (off by
+      default; building this on disables device-node IO and exposes
+      the embed entry points instead).
+    - A small embed-API header (uitoolkit/fb/ui_fb_embed.h) declaring
+      the backend-registration and event-injection functions a host
+      uses.
+
+  Things this fork DOES NOT change:
+    - The VT parser (vtemu/) — completely backend-agnostic upstream,
+      no changes needed.
+    - Sixel / ReGIS handling — already factored cleanly upstream.
+    - Other backends (X11, Cocoa, Win32, SDL, Wayland, …) — not
+      touched, not tested, may bitrot if they take incidental damage
+      from header reorganization. Pure framebuffer-embed focus.
+    - mlterm's binary (`mlterm-fb`) — still builds and still works
+      against /dev/fb0 when --enable-fb-embed is OFF.
+
+* Build (embed mode, for hosts)
+
+    ./configure --with-gui=fb --enable-fb-embed --disable-anti-alias \
+                --disable-fontconfig --disable-otl
+    make
+
+  Output: libmlterm-fb-embed.a (static lib) plus the embed-API
+  header. No `mlterm-fb` binary is built in embed mode.
+
+* Build (regular fb, for testing rebases)
+
+    ./configure --with-gui=fb
+    make
+
+  Same as upstream. Useful to confirm that rebasing onto a new
+  upstream commit didn't break the device-node path.
+
+* Upstream relationship
+
+  Upstream is github.com/arakiken/mlterm. We track its `master`
+  branch on the `upstream` remote in this repo. Our `master` branch
+  is a literal mirror of upstream/master; never commit to it
+  directly. All work goes on `fb-embed`. To sync:
+
+    git fetch upstream
+    git checkout master && git merge --ff-only upstream/master
+    git push fork master
+    git checkout fb-embed && git rebase master
+
+  The conflict surface is tiny by design — most patches are in
+  files upstream rarely touches.
+
+* Embedding host
+
+  This fork is consumed by Scalar Evolution
+  (github.com/LekKit/ScalarEvolution), a Minecraft mod that runs
+  RISC-V VMs in-world and wants real terminal rendering for its VT100
+  block. The host-side build harness lives at native/mlterm-jni/ in
+  that repo; see its PORT_PLAN.md for the integration shape.
