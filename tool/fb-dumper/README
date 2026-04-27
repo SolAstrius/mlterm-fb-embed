@@ -1,0 +1,49 @@
+comment -*- mode: text; tab-width:2; indent-tabs-mode:nil -*-
+
+mlterm-fb-dumper
+
+* What
+
+  Test/debug tool for the fb-embed fork. Drives an embed-mode mlterm
+  with a stream of VT bytes (from stdin or a file), renders one frame,
+  and writes the resulting framebuffer as a PPM image.
+
+  Built only when configure was run with --enable-fb-embed (the rest
+  of the time it's not useful — there's no embed API to call).
+
+* Usage
+
+  mlterm-fb-dumper [-c COLS] [-r ROWS] [-o OUT.ppm] [-f INPUT.vt]
+
+    -c COLS    grid columns       (default 80)
+    -r ROWS    grid rows          (default 24)
+    -o PATH    output PPM path    (default stdout)
+    -f PATH    input script path  (default stdin)
+
+  Without -f, reads VT bytes from stdin until EOF. Without -o, writes
+  PPM to stdout — pipe through ImageMagick or feh for live preview:
+
+    printf '\033[1;36mhello\r\n' | mlterm-fb-dumper | display -
+
+* Why PPM and not PNG
+
+  PPM (P6 raw RGB) has zero deps and a trivial header. cmp(1) gives
+  byte-exact diffs; standard image viewers all display it; converting
+  to PNG is one ImageMagick or netpbm call away. Adding libpng would
+  drag a dep into a tool that's only useful in a development context.
+
+* Use as a regression suite
+
+  Capture a known-good rendering once, commit it, then regress against
+  it on every refactor:
+
+    # capture once
+    cat tests/inputs/colors.vt | mlterm-fb-dumper > tests/golden/colors.ppm
+
+    # later, after refactoring
+    cat tests/inputs/colors.vt | mlterm-fb-dumper > /tmp/colors.ppm
+    cmp tests/golden/colors.ppm /tmp/colors.ppm
+
+  Sixel and ReGIS payloads pass through the parser straight to the
+  renderer, so a golden capture exercises the full pipeline including
+  graphics — the test covers what jexer never could.

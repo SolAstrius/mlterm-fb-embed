@@ -1,0 +1,43 @@
+top_builddir = ../..
+top_srcdir = @top_srcdir@
+prefix = @prefix@
+exec_prefix = @exec_prefix@
+bindir = @bindir@
+
+VPATH = ${top_srcdir}/tool/fb-dumper
+
+CC = @CC@
+CFLAGS = @CFLAGS@ @CPPFLAGS@ @POBL_CFLAGS@ @MEF_CFLAGS@ @FB_EMBED_CFLAGS@ \
+	-I${top_srcdir}/baselib/src -I${top_srcdir}/encodefilter/src \
+	-I${top_srcdir}/vtemu -I${top_srcdir}/uitoolkit
+LIBS = ../../uitoolkit/libuitoolkit.la \
+	../../vtemu/libvtemu.la \
+	../../baselib/src/libpobl.la \
+	../../encodefilter/src/libmef.la \
+	@LDFLAGS@
+
+INSTALL = @INSTALL@
+BINDIR = $(DESTDIR)$(bindir)
+
+OBJ = main.o
+PROG = mlterm-fb-dumper
+
+all: $(PROG)
+
+$(PROG): $(OBJ)
+	$(CC) -o $(PROG) $(OBJ) $(LIBS)
+
+.SUFFIXES: .c.o
+
+.c.o:
+	$(CC) $(CFLAGS) -c $<
+
+clean:
+	rm -f $(OBJ) $(PROG)
+
+install: $(PROG)
+	mkdir -p $(BINDIR)
+	$(INSTALL) -m 755 $(PROG) $(BINDIR)/$(PROG)
+
+uninstall:
+	rm -f $(BINDIR)/$(PROG)

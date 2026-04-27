@@ -1333,6 +1333,17 @@ if test "$gui" = "win32"; then
 	tools_result="$tools_result servman"
 fi
 
+dnl ---- fb-dumper (downstream fork) ----
+dnl A small test/debug tool that drives an embed-mode mlterm with VT
+dnl bytes from stdin/file and dumps the resulting framebuffer as a PPM.
+dnl Built only when --enable-fb-embed is set, since it links against
+dnl the embed entry points. See tool/fb-dumper/README.
+if test "$fb_embed" = "yes" ; then
+	OUTPUT_FILES="tool/fb-dumper/Makefile ${OUTPUT_FILES}"
+	MAKE_DIRS2="tool/fb-dumper ${MAKE_DIRS2}"
+	tools_result="$tools_result fb-dumper"
+fi
+
 #
 # --- libltdl ---
 #
