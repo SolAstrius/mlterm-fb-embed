@@ -59,7 +59,7 @@
  * we ever swap fonts (Spleen 8x16, Tamzen, Terminus, …) bump these
  * to match. */
 #define CELL_PX_W     6
-#define CELL_PX_H     13
+#define CELL_PX_H     20
 #define DEFAULT_PUMP_MS 250
 
 /* PPM (P6) writer — see README for format rationale. */

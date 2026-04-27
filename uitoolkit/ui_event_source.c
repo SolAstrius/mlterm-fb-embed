@@ -349,21 +349,31 @@ static void receive_next_event_nonblock(void) {
     }
   }
 
-  if (maxfd < 0) return;
-  ret = select(maxfd + 1, &read_fds, NULL, NULL, &tval);
-  if (ret <= 0) return;
-
-  for (count = 0; count < num_displays; count++) {
-    if (FD_ISSET(ui_display_fd(displays[count]), &read_fds)) {
-      ui_display_receive_next_event(displays[count]);
-      displays = ui_get_opened_displays(&num_displays);
+  if (maxfd >= 0) {
+    ret = select(maxfd + 1, &read_fds, NULL, NULL, &tval);
+    if (ret > 0) {
+      for (count = 0; count < num_displays; count++) {
+        if (FD_ISSET(ui_display_fd(displays[count]), &read_fds)) {
+          ui_display_receive_next_event(displays[count]);
+          displays = ui_get_opened_displays(&num_displays);
+        }
+      }
+      for (count = 0; count < num_terms; count++) {
+        ptyfd = vt_term_get_master_fd(terms[count]);
+        if (ptyfd >= 0 && FD_ISSET(ptyfd, &read_fds)) {
+          vt_term_parse_vt100_sequence(terms[count]);
+        }
+      }
     }
   }
-  for (count = 0; count < num_terms; count++) {
-    ptyfd = vt_term_get_master_fd(terms[count]);
-    if (ptyfd >= 0 && FD_ISSET(ptyfd, &read_fds)) {
-      vt_term_parse_vt100_sequence(terms[count]);
-    }
+
+  /* Drive the per-display idle pass unconditionally. This is what
+   * actually flushes the screen's "modified region" cells into the
+   * framebuffer — without it, parsed bytes sit in vt_screen but
+   * never reach pixels. The upstream blocking loop calls this after
+   * select returns no events; we need it on every pump regardless. */
+  for (count = 0; count < num_displays; count++) {
+    ui_display_idling(displays[count]);
   }
 }
 #endif

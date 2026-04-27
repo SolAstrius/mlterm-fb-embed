@@ -105,11 +105,12 @@ static int open_display(u_int depth) {
   _display.fd = _embed.kbd_pipe[0];
   _disp.display = &_display;
 
-  _mouse.fd = _embed.mouse_pipe[0];
-  _mouse.x = _embed.width / 2;
-  _mouse.y = _embed.height / 2;
-  _disp_mouse.display = (Display *)&_mouse;
-  num_opened_displays = 2;
+  /* Embed mode: no mouse cursor in the rendered buffer (the host
+   * draws its own cursor). Skipping the _mouse / _disp_mouse setup
+   * also avoids num_opened_displays > 1, which makes the renderer
+   * double-paint cells in some paths. */
+  _mouse.fd = -1;
+  num_opened_displays = 1;
 
   return 1;
 }
