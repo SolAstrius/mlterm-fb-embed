@@ -14,9 +14,23 @@ BINDIR = $(DESTDIR)$(bindir)
 # Compile flags mirror main/Makefile.in's fb path; the embed CFLAGS
 # variable carries -DUSE_FB_EMBED so the embed-API header exposes
 # the entry points we link against.
+# Path to the vendored Cozette BDF, baked into main.o as a macro so
+# the dumper writes it into ~/.mlterm/font-fb at startup. Kept as a
+# separate variable to avoid quoting interactions with autoconf's
+# sed-driven Makefile.in substitution (single quotes plus $(...)
+# refs in the CFLAGS line trip up substitution and silently truncate
+# the generated Makefile).
+# abspath turns the in-tree relative path into an absolute one at
+# build time so the macro the dumper bakes in works no matter what
+# cwd the dumper is run from. (The dumper realpaths it again at
+# startup but we want this to also work pre-install in a build
+# tree, where the build is happening under top_srcdir.)
+COZETTE_PATH = $(abspath $(top_srcdir)/vendor/cozette/cozette.pcf)
+COZETTE_DEFINE = -DCOZETTE_OTB_PATH=\"$(COZETTE_PATH)\"
+
 CFLAGS = $(CFLAGS_LOCAL) @POBL_CFLAGS@ @MEF_CFLAGS@ @DEB_CFLAGS@ \
 	@TYPE_CFLAGS@ @FT_CFLAGS@ @TRUECOLOR_CFLAGS@ @FB_EMBED_CFLAGS@ \
-	@CFLAGS@ @CPPFLAGS@ \
+	@CFLAGS@ @CPPFLAGS@ $(COZETTE_DEFINE) \
 	-I$(top_srcdir)/baselib/src -I$(top_srcdir)/encodefilter/src \
 	-I$(top_srcdir)/vtemu -I$(top_srcdir)/uitoolkit
 

@@ -1,0 +1,38 @@
+comment -*- mode: text; tab-width:2; indent-tabs-mode:nil -*-
+
+Cozette (vendored)
+
+* What
+
+  Cozette is a 6×13 px bitmap programming font, MIT-licensed,
+  upstream at https://github.com/the-moonwitch/Cozette. We use it
+  as the default font for the fb-embed dumper / embedding hosts so
+  rendered output looks like a real terminal out of the box,
+  without contributors having to maintain their own
+  ~/.mlterm/font-fb.
+
+* What's here
+
+  cozette.pcf  — runtime artefact, what mlterm actually loads
+  LICENSE      — upstream MIT license, unmodified
+
+  We don't ship the upstream .bdf source (~700 KiB) or .otb
+  (unused — mlterm's fb backend rejected it). Regen from upstream
+  if a newer Cozette release is wanted; see below.
+
+* Pinned version
+
+  v1.30.0  — https://github.com/the-moonwitch/Cozette/releases/tag/v.1.30.0
+
+* How to regenerate cozette.pcf
+
+  Download the .bdf from the upstream release, then run bdftopcf:
+
+    curl -sLO https://github.com/the-moonwitch/Cozette/releases/download/v.1.30.0/cozette.bdf
+    bdftopcf cozette.bdf > cozette.pcf
+    rm cozette.bdf
+
+  The bdftopcf step emits warnings about Nerd Font private-use
+  glyphs (codepoints above U+F0000) being out of PCF's encoding
+  range. Those glyphs are skipped silently — the regular ASCII +
+  Unicode coverage we actually use is unaffected.

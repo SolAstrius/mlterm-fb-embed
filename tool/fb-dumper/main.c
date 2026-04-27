@@ -29,10 +29,12 @@
  */
 
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -40,6 +42,14 @@
 #include "../../uitoolkit/ui_event_source.h"
 #include "../../uitoolkit/ui_screen_manager.h"
 #include "../../uitoolkit/fb/ui_fb_embed.h"
+
+/* Set by the build via -DCOZETTE_OTB_PATH (see Makefile.in). The
+ * dumper writes a one-line ~/.mlterm/font-fb pointing at this file
+ * before main_loop_init runs, so first-time users get crisp bitmap
+ * rendering without having to maintain mlterm config themselves. */
+#ifndef COZETTE_OTB_PATH
+#define COZETTE_OTB_PATH "vendor/cozette/cozette.otb"
+#endif
 
 #define DEFAULT_COLS  80
 #define DEFAULT_ROWS  24
@@ -107,6 +117,36 @@ int main(int argc, char *argv[]) {
   if (ui_fb_embed_attach(buf, width, height, width) != 0) {
     fprintf(stderr, "ui_fb_embed_attach failed\n");
     return 1;
+  }
+
+  /* Write a minimal ~/.mlterm/font-fb that points all the charsets
+   * mlterm asks for at the vendored Cozette font. Without this,
+   * fontconfig picks a proportional fallback at our cell size and
+   * the rendered output has wide inconsistent letter spacing. */
+  char font_abs[PATH_MAX];
+  if (!realpath(COZETTE_OTB_PATH, font_abs)) {
+    fprintf(stderr,
+        "warning: can't resolve font path '%s' (%s); mlterm will fall back\n",
+        COZETTE_OTB_PATH, strerror(errno));
+    font_abs[0] = '\0';
+  }
+  const char *home = getenv("HOME");
+  if (home && font_abs[0]) {
+    char ml_dir[1024];
+    snprintf(ml_dir, sizeof(ml_dir), "%s/.mlterm", home);
+    mkdir(ml_dir, 0755);  /* ignore EEXIST */
+    char font_fb[1024];
+    snprintf(font_fb, sizeof(font_fb), "%s/.mlterm/font-fb", home);
+    FILE *fp = fopen(font_fb, "w");
+    if (fp) {
+      fprintf(fp,
+          "# Auto-written by mlterm-fb-dumper. Edit by hand if you want a\n"
+          "# different font; the dumper rewrites this file on every run.\n"
+          "DEFAULT = %s;\n"
+          "ISO10646_UCS4_1 = %s;\n",
+          font_abs, font_abs);
+      fclose(fp);
+    }
   }
 
   /* Build the argv we'll hand to main_loop_init. */
