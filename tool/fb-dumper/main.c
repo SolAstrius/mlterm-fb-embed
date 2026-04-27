@@ -53,8 +53,13 @@
 
 #define DEFAULT_COLS  80
 #define DEFAULT_ROWS  24
-#define CELL_PX_W     8
-#define CELL_PX_H     16
+/* Match Cozette's bitmap cell. mlterm reads the PCF's own size and
+ * computes its grid as buffer_w/cell_w × buffer_h/cell_h, so the
+ * buffer dims have to match the font, not the other way around. If
+ * we ever swap fonts (Spleen 8x16, Tamzen, Terminus, …) bump these
+ * to match. */
+#define CELL_PX_W     6
+#define CELL_PX_H     13
 #define DEFAULT_PUMP_MS 250
 
 /* PPM (P6) writer — see README for format rationale. */
