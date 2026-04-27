@@ -38,6 +38,7 @@
 #include <unistd.h>
 
 #include "ui_fb_embed.h"
+#include "../ui_event_source.h"   /* ui_event_source_process for the pump */
 
 /* --- static state --- */
 

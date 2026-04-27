@@ -1061,6 +1061,12 @@ static int get_active_console(void) {
 }
 #endif
 
+#ifndef USE_FB_EMBED
+/* Embed mode never reads STDIN as a fallback keyboard, and would
+ * lack the per-platform get_key_state() this function depends on
+ * since the host-OS file (which defines it) is excluded from the
+ * build. The platform files that call this (ui_display_linux.c
+ * etc.) are also excluded, so the symbol is dead code here. */
 static int receive_stdin_key_event(void) {
   u_char buf[6];
   ssize_t len;
@@ -1207,6 +1213,7 @@ static int receive_stdin_key_event(void) {
 
   return 1;
 }
+#endif /* !USE_FB_EMBED */
 
 #endif /* __FreeBSD__ */
 

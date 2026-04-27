@@ -36,6 +36,10 @@
             m4
             pkg-config
             gnumake
+            # gettext + glib supply the AM_GLIB_GNU_GETTEXT macro
+            # configure.in expects from gtk/po setup paths.
+            gettext
+            glib
 
             zig
 
@@ -54,13 +58,17 @@
             export MLTERM_SRC="$PWD"
             echo "mlterm-fb-embed devshell."
             echo
+            echo "NB: use plain 'autoconf' to regenerate configure;"
+            echo "'autoreconf -fi' fails because the build uses hand-"
+            echo "written Makefile.in files, not automake-generated ones."
+            echo
             echo "Quick build (Linux fb, no embed):"
-            echo "  autoreconf -fi && ./configure --with-gui=fb \\"
+            echo "  autoconf && ./configure --with-gui=fb \\"
             echo "    --disable-anti-alias --disable-fontconfig --disable-otl"
             echo "  make"
             echo
             echo "Quick build (embed mode + dumper):"
-            echo "  autoreconf -fi && ./configure --with-gui=fb --enable-fb-embed \\"
+            echo "  autoconf && ./configure --with-gui=fb --enable-fb-embed \\"
             echo "    --disable-anti-alias --disable-fontconfig --disable-otl"
             echo "  make && ls tool/fb-dumper/mlterm-fb-dumper"
             echo

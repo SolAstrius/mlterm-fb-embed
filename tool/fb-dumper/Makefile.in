@@ -7,25 +7,37 @@ bindir = @bindir@
 VPATH = ${top_srcdir}/tool/fb-dumper
 
 CC = @CC@
-CFLAGS = @CFLAGS@ @CPPFLAGS@ @POBL_CFLAGS@ @MEF_CFLAGS@ @FB_EMBED_CFLAGS@ \
-	-I${top_srcdir}/baselib/src -I${top_srcdir}/encodefilter/src \
-	-I${top_srcdir}/vtemu -I${top_srcdir}/uitoolkit
-LIBS = ../../uitoolkit/libuitoolkit.la \
-	../../vtemu/libvtemu.la \
-	../../baselib/src/libpobl.la \
-	../../encodefilter/src/libmef.la \
-	@LDFLAGS@
-
+LIBTOOL = @LIBTOOL@
 INSTALL = @INSTALL@
 BINDIR = $(DESTDIR)$(bindir)
+
+# Compile flags mirror main/Makefile.in's fb path; the embed CFLAGS
+# variable carries -DUSE_FB_EMBED so the embed-API header exposes
+# the entry points we link against.
+CFLAGS = $(CFLAGS_LOCAL) @POBL_CFLAGS@ @MEF_CFLAGS@ @DEB_CFLAGS@ \
+	@TYPE_CFLAGS@ @FT_CFLAGS@ @TRUECOLOR_CFLAGS@ @FB_EMBED_CFLAGS@ \
+	@CFLAGS@ @CPPFLAGS@ \
+	-I$(top_srcdir)/baselib/src -I$(top_srcdir)/encodefilter/src \
+	-I$(top_srcdir)/vtemu -I$(top_srcdir)/uitoolkit
+
+# Link inputs: same shape as main/Makefile.in's fb mode. Static
+# archives produced by the in-tree builds, linked through libtool
+# so the libpobl/libmef shared-library handling works.
+LMLTERM = ../../vtemu/libmlterm@TRUECOLOR_TAG@.a ../../vtemu/@LMLTERM_CORE@
+LUITK = ../../uitoolkit/libuitoolkit.a
+LIBS = $(LUITK) $(LMLTERM) @LMEF@ @LPOBL@ \
+	@MATH_LIBS@ @DL_LIBS_IM@ @DL_LIBS_SB@ @FT_LIBS@ @SOCK_LIBS@ \
+	@PTHREAD_LIB@
+
+LIBTOOL_LINK = $(LIBTOOL) --mode=link $(CC) @LDFLAGS@
 
 OBJ = main.o
 PROG = mlterm-fb-dumper
 
 all: $(PROG)
 
-$(PROG): $(OBJ)
-	$(CC) -o $(PROG) $(OBJ) $(LIBS)
+$(PROG): $(OBJ) $(LMLTERM) $(LUITK)
+	$(LIBTOOL_LINK) -o $(PROG) $(OBJ) $(LIBS)
 
 .SUFFIXES: .c.o
 

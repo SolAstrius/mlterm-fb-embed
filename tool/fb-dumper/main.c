@@ -118,22 +118,22 @@ int main(int argc, char *argv[]) {
 
   /* Build a vt_term that owns the parser + cell grid. The fb
    * backend's display layer (now reading our buffer) renders
-   * whatever this term holds.
-   *
-   * Args mirror upstream test.c: TERM=xterm-256color, no PTY of our
-   * own (we feed bytes directly via vt_term_write), default font
-   * size, no zmodem etc. */
+   * whatever this term holds. Argument order matches the prototype
+   * in vtemu/vt_term.h exactly; integer enums get zero values
+   * (= "default"), pointer args get NULL. */
   vt_term_t *term = vt_term_new(
-      "xterm-256color", cols, rows, /*tab_size=*/8,
-      /*log_size=*/64, /*encoding=*/0, /*is_auto_encoding=*/0,
-      /*use_one_column_font=*/0, CELL_PX_W, CELL_PX_H,
-      /*screen_width_ratio=*/100, /*screen_height_ratio=*/100,
+      "xterm-256color", cols, rows,
+      /*tab_size=*/8, /*log_size=*/64,
+      /*encoding=*/0, /*is_auto_encoding=*/0,
+      /*use_auto_detect=*/0, /*logging_vt_seq=*/0,
+      /*policy=*/0, /*col_size_a=*/1,
       /*use_char_combining=*/1, /*use_multi_col_char=*/1,
       /*use_ctl=*/1, /*bidi_mode=*/0, /*bidi_separators=*/NULL,
       /*use_dynamic_comb=*/0, /*bs_mode=*/0,
       /*vertical_mode=*/0, /*use_local_echo=*/0,
-      /*win_name=*/NULL, /*icon_name=*/NULL, /*use_ansi_colors=*/1,
-      /*alt_color_mode=*/0, /*cursor_style=*/0,
+      /*win_name=*/NULL, /*icon_name=*/NULL,
+      /*use_ansi_colors=*/1, /*alt_color_mode=*/0,
+      /*use_ot_layout=*/0, /*cursor_style=*/0,
       /*ignore_broadcasted_chars=*/0, /*use_locked_title=*/0);
   if (!term) {
     fprintf(stderr, "vt_term_new failed\n");
