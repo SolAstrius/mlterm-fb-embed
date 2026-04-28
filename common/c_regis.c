@@ -70,16 +70,36 @@ static int convert_regis_to_bmp(char *path) {
      */
     if ((new_path = (char*)malloc(len + 1))) {
       char *argv[4];
+      /* fb-embed (downstream fork): honor MLTERM_LIBEXEC_DIR env var
+       * for the registobmp lookup. Lets an embedding host (the scev
+       * JNI loader, in our case) extract the helpers to a runtime
+       * temp dir without having to predict the path at build time.
+       * Falls back to the baked-in BL_LIBEXECDIR when unset, so
+       * stand-alone mlterm-fb installs still work as before. */
+      const char *envdir = getenv("MLTERM_LIBEXEC_DIR");
+      char *exe_buf = NULL;
+      if (envdir && *envdir) {
+        size_t elen = strlen(envdir) + strlen("/mlterm/registobmp") + 1;
+        exe_buf = (char *)malloc(elen);
+        if (exe_buf) {
+          snprintf(exe_buf, elen, "%s/mlterm/registobmp", envdir);
+          argv[0] = exe_buf;
+        } else {
+          argv[0] = BL_LIBEXECDIR("mlterm") "/registobmp";
+        }
+      } else {
+        argv[0] = BL_LIBEXECDIR("mlterm") "/registobmp";
+      }
 
       strncpy(new_path, path, len - 4);
       strcpy(new_path + len - 4, ".bmp");
 
-      argv[0] = BL_LIBEXECDIR("mlterm") "/registobmp";
       argv[1] = path;
       argv[2] = new_path;
       argv[3] = NULL;
 
       execve(argv[0], argv, NULL);
+      free(exe_buf);
     }
 
     exit(1);

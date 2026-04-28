@@ -576,8 +576,16 @@ static int exec_mlimgloader(char *path, u_int width, u_int height, int keep_aspe
     char *args[8];
     char width_str[DIGIT_STR_LEN(u_int) + 1];
     char height_str[DIGIT_STR_LEN(u_int) + 1];
-
-    args[0] = BL_LIBEXECDIR("mlterm") "/mlimgloader";
+    /* fb-embed (downstream fork): MLTERM_LIBEXEC_DIR env override.
+     * See common/c_regis.c for the rationale — same shape. */
+    const char *envdir = getenv("MLTERM_LIBEXEC_DIR");
+    char libexec_buf[512];
+    if (envdir && *envdir) {
+      snprintf(libexec_buf, sizeof(libexec_buf), "%s/mlterm/mlimgloader", envdir);
+      args[0] = libexec_buf;
+    } else {
+      args[0] = BL_LIBEXECDIR("mlterm") "/mlimgloader";
+    }
     args[1] = "0";
     sprintf(width_str, "%u", width);
     args[2] = width_str;

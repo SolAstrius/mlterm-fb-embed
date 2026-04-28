@@ -60,3 +60,7 @@ result-*
 *.swp
 *~
 BUILD_SUCCESS
+
+# Build artifacts produced by the embedded build harness
+.scev-configured
+tool/*/registobmp
