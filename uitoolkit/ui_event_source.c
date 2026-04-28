@@ -7,6 +7,7 @@
 #ifndef USE_WIN32API
 #include <string.h>       /* memset/memcpy */
 #include <sys/time.h>     /* timeval */
+#include <time.h>         /* clock_gettime, struct timespec (embed pump) */
 #include <unistd.h>       /* select */
 #include <pobl/bl_file.h> /* bl_file_set_cloexec */
 #endif
@@ -367,13 +368,28 @@ static void receive_next_event_nonblock(void) {
     }
   }
 
-  /* Drive the per-display idle pass unconditionally. This is what
-   * actually flushes the screen's "modified region" cells into the
-   * framebuffer — without it, parsed bytes sit in vt_screen but
-   * never reach pixels. The upstream blocking loop calls this after
-   * select returns no events; we need it on every pump regardless. */
-  for (count = 0; count < num_displays; count++) {
-    ui_display_idling(displays[count]);
+  /* Drive the per-display idle pass — flushes the screen's
+   * "modified region" cells into the framebuffer.
+   *
+   * Rate-limit to ~10Hz. The upstream blocking loop in
+   * receive_next_event() runs idling once per ~100ms (its select()
+   * timeout). The host's UI loop, by contrast, drives us at its
+   * own draw rate — typically 60Hz. Calling idling on every pump
+   * runs cursor-blink + ui_animate_inline_pictures 6x too fast,
+   * which cycles their internal state machines through unexpected
+   * branches and (in embed mode, on a JVM render thread) wedges
+   * after a few hundred frames. 10Hz matches what the upstream
+   * loop sees and is more than enough for a blink cursor. */
+  static struct timespec last_idle = {0, 0};
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  long long elapsed_ms = (long long)(now.tv_sec - last_idle.tv_sec) * 1000
+                      + (long long)(now.tv_nsec - last_idle.tv_nsec) / 1000000;
+  if (elapsed_ms >= 100) {
+    last_idle = now;
+    for (count = 0; count < num_displays; count++) {
+      ui_display_idling(displays[count]);
+    }
   }
 }
 #endif
