@@ -183,15 +183,19 @@ int main(int argc, char *argv[]) {
   }
 
   /* Suppress the in-window scrollbar (we're a one-shot capturer,
-   * not an interactive terminal) and force a black-on-white →
+   * not an interactive terminal), force a black-on-white →
    * white-on-black flip so the output looks like a real terminal
-   * rather than a printout. */
+   * rather than a printout, and disable anti-aliasing so the
+   * vendored bitmap-style font (Cozette / JetBrains Mono / etc.)
+   * renders pixel-crisp instead of with freetype's grey edge
+   * smoothing. */
   char *ml_argv[] = {
     (char *)"mlterm-fb-dumper",
     (char *)"--geometry", geom,
     (char *)"-fg",        (char *)"white",
     (char *)"-bg",        (char *)"black",
     (char *)"-sb",        (char *)"false",
+    (char *)"--aa",       (char *)"false",
     (char *)"-e",         (char *)"/bin/sh", (char *)"-c", (char *)e_arg,
     NULL,
   };
