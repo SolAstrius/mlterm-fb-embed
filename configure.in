@@ -776,11 +776,12 @@ if test "$fb_embed" = "yes" ; then
 		AC_MSG_ERROR([--enable-fb-embed requires --with-gui=fb])
 	fi
 	FB_EMBED_CFLAGS="-DUSE_FB_EMBED"
-	dnl In-process image loader (embed_imgloader.c uses stb_image
-	dnl directly so PNG/JPG/GIF/BMP load without exec'ing the
-	dnl mlimgloader helper). Sixel still goes through the existing
-	dnl BUILTIN_SIXEL path; ReGIS is currently a no-op in embed mode.
-	FB_EMBED_OBJ="embed_imgloader.o"
+	dnl In-process loaders: embed_imgloader.c wraps stb_image for
+	dnl PNG/JPG/GIF/BMP, embed_regis.c lifts the standalone
+	dnl registobmp interpreter into libuitoolkit (so .rgs vector
+	dnl graphics render in-process — no execve, no SDL link). Sixel
+	dnl still goes through the existing BUILTIN_SIXEL path.
+	FB_EMBED_OBJ="embed_imgloader.o embed_regis.o"
 fi
 AC_SUBST(FB_EMBED_CFLAGS)
 AC_SUBST(FB_EMBED_OBJ)

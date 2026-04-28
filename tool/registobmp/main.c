@@ -1,10 +1,34 @@
 /* -*- c-basic-offset:2; tab-width:2; indent-tabs-mode:nil -*- */
 
+/* fb-embed (downstream fork): this file builds two ways.
+ *
+ * Standalone tool (default):
+ *   The original mlterm registobmp CLI — argv-parses an .rgs file,
+ *   uses SDL2 for the canvas, optionally SDL_ttf + fontconfig for
+ *   text rendering, writes a .bmp via SDL_SaveBMP. Builds against
+ *   the libsdl2-dev system package. Behaviour unchanged from
+ *   upstream.
+ *
+ * Embed library (USE_FB_EMBED):
+ *   Same interpreter, but every SDL/SDL_ttf/fontconfig touch is
+ *   #ifdef'd out and replaced with a tiny portable shim. Exposes
+ *   regis_render_file(path, &out_image) so libuitoolkit can call
+ *   the ReGIS interpreter in-process for embed hosts that don't
+ *   ship a separate registobmp binary. Text rendering is a no-op
+ *   in embed mode (T'...' is consumed but not painted) — text is
+ *   rare in real ReGIS streams; lifting SDL_ttf would pull the
+ *   whole font-rendering stack into the .so for a tiny payoff.
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h> /* atoi */
 #include <stdint.h>
 #include <math.h>
+
+#ifdef USE_FB_EMBED
+#include "regis_render.h"
+#else
 #include <SDL.h>
 #ifdef USE_SDLTTF
 #include <SDL_ttf.h>
@@ -12,7 +36,63 @@
 #ifdef USE_FONTCONFIG
 #include <fontconfig/fontconfig.h>
 #endif
+#endif
+
 #include <pobl/bl_def.h>
+
+#ifdef USE_FB_EMBED
+/* Shim: replace SDL_Surface with our own portable struct, and
+ * the few SDL helpers the interpreter calls. The interpreter
+ * itself is unchanged — it accesses regis via the pixel_at()
+ * macro which works on any struct with `pixels` + `w`. */
+#define SDL_Surface regis_image_t
+typedef struct { int x, y, w, h; } SDL_Rect;
+
+static SDL_Surface *embed_create_surface(int width, int height) {
+  SDL_Surface *s = (SDL_Surface *)malloc(sizeof(*s));
+  if (!s) return NULL;
+  s->pixels = (uint32_t *)calloc((size_t)width * height, sizeof(uint32_t));
+  if (!s->pixels) { free(s); return NULL; }
+  s->w = width;
+  s->h = height;
+  return s;
+}
+
+static void embed_free_surface(SDL_Surface *s) {
+  if (!s) return;
+  free(s->pixels);
+  free(s);
+}
+
+/* SDL_FillRect with rect==NULL means "fill whole surface" — only
+ * usage in this file. */
+static void embed_fill_rect(SDL_Surface *s, SDL_Rect *rect, uint32_t color) {
+  (void)rect;
+  size_t n = (size_t)s->w * s->h;
+  for (size_t i = 0; i < n; i++) s->pixels[i] = color;
+}
+
+/* SDL_BlitSurface for the resize() path: copy a top-left sub-rect
+ * from src to dst. dstrect with x=y=0 means "place at origin". */
+static void embed_blit_surface(SDL_Surface *src, SDL_Rect *srect,
+                               SDL_Surface *dst, SDL_Rect *drect) {
+  (void)drect;
+  int rw = srect->w;
+  int rh = srect->h;
+  for (int y = 0; y < rh; y++) {
+    memcpy(dst->pixels + (size_t)y * dst->w,
+           src->pixels + (size_t)y * src->w,
+           (size_t)rw * sizeof(uint32_t));
+  }
+}
+
+#define SDL_CreateRGBSurface(flags, w, h, depth, rm, gm, bm, am) \
+        embed_create_surface(w, h)
+#define SDL_FillRect(s, r, c)        embed_fill_rect(s, r, c)
+#define SDL_BlitSurface(s, sr, d, dr) embed_blit_surface(s, sr, d, dr)
+#define SDL_FreeSurface(s)           embed_free_surface(s)
+#define SDL_SWSURFACE 0
+#endif /* USE_FB_EMBED */
 
 #define pixel_at(x, y) (((u_int32_t *)regis->pixels)[(y)*regis->w + (x)])
 #define REGIS_RGB(r, g, b) \
@@ -331,6 +411,27 @@ static char *parse_quoted_text(char *text, char quote) {
 }
 
 static char *command_text(char *cmd) {
+#ifdef USE_FB_EMBED
+  /* fb-embed: no font stack in the embed library. Walk past the
+   * options + quoted string so the parser keeps going, but don't
+   * paint anything. SDL_ttf + fontconfig would otherwise pull a
+   * 100-MiB chain of deps into the .so for a feature most ReGIS
+   * streams (vector geometry from VAX/PDP-era OSes) don't use. */
+  if (*cmd == '(') {
+    char *options[10];
+    cmd++;
+    if (!parse_options(options, &cmd)) {
+      return cmd - 1;
+    }
+  }
+  char quote = *cmd;
+  char *text = cmd + 1;
+  if ((quote != '\'' && quote != '"') || !(cmd = parse_quoted_text(text, quote))) {
+    return cmd;
+  }
+  return cmd;
+}
+#else
   static int no_font;
   char quote;
   char *text;
@@ -495,6 +596,7 @@ static char *command_text(char *cmd) {
 
   return cmd;
 }
+#endif /* USE_FB_EMBED else */
 
 static char *command_w(char *cmd) {
   char *options[10];
@@ -793,6 +895,86 @@ static void test_parse_quoted_text(void) {
 
 /* --- global functions --- */
 
+#ifdef USE_FB_EMBED
+/* fb-embed entry. Reads `path` (a .rgs source file), runs the
+ * interpreter, hands back an ARGB8888 image. Caller frees out->pixels
+ * via regis_image_free(). Returns 1 on success, 0 on failure.
+ *
+ * Initial canvas size is 800×480, matching the standalone tool's
+ * default. The interpreter may grow this via the S(A...) command. */
+int regis_render_file(const char *path, regis_image_t *out) {
+  FILE *fp;
+  char line[256];
+  char *cmd;
+
+  if (!out || !path) return 0;
+  out->pixels = NULL;
+  out->w = out->h = 0;
+
+  if (!(fp = fopen(path, "r"))) {
+    return 0;
+  }
+
+  /* Reset interpreter state (file-scope statics). */
+  pen_x = pen_y = 0;
+  pen_stack_count = 0;
+  circle_center = 0;
+  fg_color = 0xff000000;
+  bg_color = 0xffffffff;
+  if (regis) {
+    embed_free_surface(regis);
+    regis = NULL;
+  }
+  resize(800, 480);
+
+  if ((cmd = fgets(line, sizeof(line), fp))) {
+    char *p;
+    if (*cmd == '\x1b' && (p = strchr(cmd, 'p'))) {
+      cmd = p + 1;
+    }
+    do {
+      while (*(cmd = command(cmd)))
+        ;
+    } while ((cmd = fgets(line, sizeof(line), fp)));
+  }
+  fclose(fp);
+
+  if (!regis) return 0;
+
+  /* Hand pixel ownership to the caller. The interpreter wrote
+   * 0xAARRGGBB host-endian uint32s; on a little-endian host that
+   * lays out as B,G,R,A bytes in memory. embed_imgloader expects
+   * RGBA byte order (R at byte 0). Swap R↔B in place. */
+  size_t n = (size_t)regis->w * regis->h;
+  for (size_t i = 0; i < n; i++) {
+    uint32_t p = regis->pixels[i];
+    uint32_t a = (p >> 24) & 0xff;
+    uint32_t r = (p >> 16) & 0xff;
+    uint32_t g = (p >>  8) & 0xff;
+    uint32_t b =  p        & 0xff;
+    regis->pixels[i] = (a << 24) | (b << 16) | (g << 8) | r;
+  }
+
+  out->pixels = regis->pixels;
+  out->w = regis->w;
+  out->h = regis->h;
+
+  /* Don't free regis->pixels — caller owns now. Free the wrapper. */
+  free(regis);
+  regis = NULL;
+
+  return 1;
+}
+
+void regis_image_free(regis_image_t *img) {
+  if (!img) return;
+  free(img->pixels);
+  img->pixels = NULL;
+  img->w = img->h = 0;
+}
+
+#else  /* USE_FB_EMBED — standalone tool from here on */
+
 int main(int argc, char **argv) {
   FILE *fp;
   char line[256];
@@ -858,3 +1040,5 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+
+#endif /* USE_FB_EMBED */

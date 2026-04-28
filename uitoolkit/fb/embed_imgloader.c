@@ -30,7 +30,10 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>  /* strcasecmp */
 #include <pobl/bl_debug.h>
+
+#include "../../tool/registobmp/regis_render.h"
 
 /* Single-header lib comes in through here; STB_IMAGE_IMPLEMENTATION
  * is defined once in this translation unit only. */
@@ -47,6 +50,25 @@ int embed_load_image_file(const char *path, u_int desired_w, u_int desired_h,
                           u_int *out_w, u_int *out_h) {
   int w, h, comp;
   unsigned char *raw;
+
+  /* ReGIS files (.rgs) — interpret the vector commands in-process
+   * via the lifted registobmp interpreter. Returns RGBA8888 byte
+   * order, same shape stbi_load below produces. We do NOT resize:
+   * ReGIS canvases are coordinate-precise and rescaling them would
+   * blur intentional pixel art / single-pixel lines. */
+  size_t plen = path ? strlen(path) : 0;
+  if (plen >= 4 && strcasecmp(path + plen - 4, ".rgs") == 0) {
+    regis_image_t img = { NULL, 0, 0 };
+    if (!regis_render_file(path, &img)) {
+      bl_msg_printf("embed_imgloader: regis_render_file failed for %s\n", path);
+      return 0;
+    }
+    *out_image = (u_char *)img.pixels;
+    *out_w = (u_int)img.w;
+    *out_h = (u_int)img.h;
+    (void)desired_w; (void)desired_h; (void)keep_aspect;
+    return 1;
+  }
 
   /* desired_channels=4 → stb_image always returns RGBA8888 byte
    * order (R at byte 0). Matches what mlimgloader writes over the
