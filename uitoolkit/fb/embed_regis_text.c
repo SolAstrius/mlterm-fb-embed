@@ -128,8 +128,20 @@ void embed_regis_set_font_path(const char *path) {
 
 int embed_regis_draw_text(regis_image_t *img, int x, int y,
                           uint32_t color, int size, const char *utf8) {
-  if (!img || !utf8 || !*utf8) return 0;
-  if (!ensure_face_loaded(size)) return 0;
+  if (!img || !utf8 || !*utf8) {
+    fprintf(stderr, "[regis_text] called with %s\n",
+            !img ? "NULL img" : (!utf8 ? "NULL utf8" : "empty utf8"));
+    return 0;
+  }
+  if (!ensure_face_loaded(size)) {
+    fprintf(stderr, "[regis_text] ensure_face_loaded(size=%d) failed; "
+                    "font_path=%s, ft_lib=%p, ft_face=%p\n",
+            size, font_path ? font_path : "(null)",
+            (void *)ft_lib, (void *)ft_face);
+    return 0;
+  }
+  fprintf(stderr, "[regis_text] draw '%s' at (%d,%d) size=%d color=0x%08x\n",
+          utf8, x, y, size, color);
 
   /* y in ReGIS is the BASELINE position, FreeType's bitmap_top is
    * the distance from baseline UP to the top of the glyph bitmap.

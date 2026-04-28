@@ -59,10 +59,16 @@ int embed_load_image_file(const char *path, u_int desired_w, u_int desired_h,
   size_t plen = path ? strlen(path) : 0;
   if (plen >= 4 && strcasecmp(path + plen - 4, ".rgs") == 0) {
     regis_image_t img = { NULL, 0, 0 };
+    fprintf(stderr, "[embed_imgloader] regis_render_file(%s) ...\n", path);
     if (!regis_render_file(path, &img)) {
-      bl_msg_printf("embed_imgloader: regis_render_file failed for %s\n", path);
+      fprintf(stderr, "[embed_imgloader] regis_render_file FAILED for %s\n", path);
       return 0;
     }
+    fprintf(stderr, "[embed_imgloader] regis OK %dx%d, "
+                    "pixel[0]=0x%08x pixel[center]=0x%08x\n",
+            img.w, img.h,
+            img.pixels[0],
+            img.pixels[(img.h/2) * img.w + (img.w/2)]);
     *out_image = (u_char *)img.pixels;
     *out_w = (u_int)img.w;
     *out_h = (u_int)img.h;
