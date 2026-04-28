@@ -400,7 +400,38 @@ static int load_sixel_with_mask_from_data_1bpp(char *file_data, u_int width, u_i
 #include "../../common/c_sixel.c"
 #undef SIXEL_SHAREPALETTE
 
-#if defined(USE_WIN32API)
+#if defined(USE_FB_EMBED)
+/* fb-embed (downstream fork): in-process image loader. Replaces
+ * the fork+execve path below — embed hosts ship one .so with no
+ * accompanying mlimgloader/registobmp binaries. PNG/JPG/GIF/BMP
+ * decoded via stb_image; sixel handled by the BUILTIN_SIXEL block
+ * higher up; ReGIS not yet supported in embed mode. */
+#include "embed_imgloader.h"
+
+static int exec_mlimgloader(char *path, u_int width, u_int height, int keep_aspect,
+                            Pixmap *pixmap) {
+  u_int actual_w = width;
+  u_int actual_h = height;
+  u_char *image = NULL;
+
+  if (!embed_load_image_file(path, width, height, keep_aspect,
+                             &image, &actual_w, &actual_h)) {
+    return 0;
+  }
+
+  if (!(*pixmap = calloc(1, sizeof(**pixmap)))) {
+    free(image);
+    return 0;
+  }
+
+  (*pixmap)->image = image;
+  (*pixmap)->width = actual_w;
+  (*pixmap)->height = actual_h;
+
+  return 1;
+}
+
+#elif defined(USE_WIN32API)
 #include <windows.h>
 
 static int exec_mlimgloader(char *path, u_int width, u_int height, int keep_aspect,

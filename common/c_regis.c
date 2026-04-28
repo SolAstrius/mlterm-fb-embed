@@ -42,6 +42,16 @@ static int convert_regis_to_bmp(char *path) {
 #include <pobl/bl_path.h> /* bl_basename */
 
 static int convert_regis_to_bmp(char *path) {
+#ifdef USE_FB_EMBED
+  /* fb-embed (downstream fork): ReGIS conversion is not supported
+   * in embed mode yet. The conversion logic still lives inside
+   * tool/registobmp/main(); lifting it into a callable function
+   * is a separate patch. Until then, return 0 so the caller in
+   * c_imagelib.c falls back to its "couldn't load image" path —
+   * the embed app shows tofu instead of garbled content. */
+  (void)path;
+  return 0;
+#else
   pid_t pid;
   int status;
 
@@ -123,6 +133,7 @@ static int convert_regis_to_bmp(char *path) {
   }
 
   return 0;
+#endif /* USE_FB_EMBED */
 }
 
 #endif

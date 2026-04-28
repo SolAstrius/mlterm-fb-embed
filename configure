@@ -810,6 +810,7 @@ CAIRO_CFLAGS
 xft_config
 XFT_LIBS
 XFT_CFLAGS
+FB_EMBED_OBJ
 FB_EMBED_CFLAGS
 FONTCONFIG_LIBS
 FONTCONFIG_CFLAGS
@@ -20511,7 +20512,9 @@ if test "$fb_embed" = "yes" ; then
 		as_fn_error $? "--enable-fb-embed requires --with-gui=fb" "$LINENO" 5
 	fi
 	FB_EMBED_CFLAGS="-DUSE_FB_EMBED"
+					FB_EMBED_OBJ="embed_imgloader.o"
 fi
+
 
 
 
