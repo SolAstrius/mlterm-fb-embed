@@ -28,7 +28,7 @@ BINDIR = $(DESTDIR)$(bindir)
 # build time so the macro the dumper bakes in works no matter what
 # cwd the dumper is run from. (The dumper realpaths it again at
 # startup but we want this to also work pre-install in a build tree.)
-EMBED_FONT_PATH = $(abspath $(top_srcdir)/vendor/jetbrains-mono/JetBrainsMono-Regular.ttf)
+EMBED_FONT_PATH = $(abspath $(top_srcdir)/vendor/cozette/cozette.bdf)
 EMBED_FONT_DEFINE = -DEMBED_FONT_PATH=\"$(EMBED_FONT_PATH)\"
 
 CFLAGS = $(CFLAGS_LOCAL) @POBL_CFLAGS@ @MEF_CFLAGS@ @DEB_CFLAGS@ \

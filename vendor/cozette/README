@@ -1,0 +1,33 @@
+comment -*- mode: text; tab-width:2; indent-tabs-mode:nil -*-
+
+Cozette (vendored)
+
+* What
+
+  Cozette is a 6×13 px bitmap programming font, MIT-licensed,
+  upstream at https://github.com/the-moonwitch/Cozette. We use it
+  as the default font for the fb-embed dumper / embedding hosts so
+  rendered output is pixel-crisp + monospace out of the box.
+
+* What's here
+
+  cozette.bdf  — runtime artefact (~700 KiB), what mlterm loads via
+                 the new BDF support in uitoolkit/fb/ui_font.c
+  LICENSE      — upstream MIT, unmodified
+
+* Why BDF and not PCF
+
+  We tried .pcf first (converted from .bdf via bdftopcf). mlterm's
+  upstream pcf rendering pipeline draws each glyph row twice into
+  the descender area, garbling output — likely a bdftopcf metrics
+  quirk mlterm doesn't account for. Same input via .bdf through
+  freetype's bdf module renders cleanly.
+
+* Pinned version
+
+  v1.30.0 — https://github.com/the-moonwitch/Cozette/releases/tag/v.1.30.0
+
+* How to update
+
+    curl -sL -o vendor/cozette/cozette.bdf \
+      https://github.com/the-moonwitch/Cozette/releases/download/v.1.30.0/cozette.bdf

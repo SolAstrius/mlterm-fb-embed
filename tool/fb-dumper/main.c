@@ -55,13 +55,10 @@
 
 #define DEFAULT_COLS  80
 #define DEFAULT_ROWS  24
-/* JetBrains Mono Regular at mlterm's default font size renders
- * roughly 9x18 per cell. mlterm computes its grid as
- * buffer_w/cell_w × buffer_h/cell_h, so the buffer dims have to
- * match the font's natural cell size or text gets misaligned.
- * Adjust if the font is swapped. */
-#define CELL_PX_W     9
-#define CELL_PX_H     18
+/* Cozette's natural cell. AVERAGE_WIDTH 60 = 6 px, PIXEL_SIZE 13.
+ * Match exactly — padding leaves visible inter-letter gaps. */
+#define CELL_PX_W     6
+#define CELL_PX_H     13
 #define DEFAULT_PUMP_MS 250
 
 /* PPM (P6) writer — see README for format rationale. */
@@ -127,14 +124,19 @@ int main(int argc, char *argv[]) {
   }
 
   /* Write a minimal ~/.mlterm/font-fb that points all the charsets
-   * mlterm asks for at the vendored Cozette font. Without this,
-   * fontconfig picks a proportional fallback at our cell size and
-   * the rendered output has wide inconsistent letter spacing. */
+   * mlterm asks for at the vendored font. Without this, fontconfig
+   * picks a proportional fallback at our cell size and the rendered
+   * output has wide inconsistent letter spacing.
+   *
+   * Honor MLTERM_FB_EMBED_FONT env var as an override so the dumper
+   * can be pointed at any font on disk for testing without rebuilding. */
+  const char *font_path_override = getenv("MLTERM_FB_EMBED_FONT");
+  const char *font_path = font_path_override ? font_path_override : EMBED_FONT_PATH;
   char font_abs[PATH_MAX];
-  if (!realpath(EMBED_FONT_PATH, font_abs)) {
+  if (!realpath(font_path, font_abs)) {
     fprintf(stderr,
         "warning: can't resolve font path '%s' (%s); mlterm will fall back\n",
-        EMBED_FONT_PATH, strerror(errno));
+        font_path, strerror(errno));
     font_abs[0] = '\0';
   }
   const char *home = getenv("HOME");
@@ -196,6 +198,7 @@ int main(int argc, char *argv[]) {
     (char *)"-bg",        (char *)"black",
     (char *)"-sb",        (char *)"false",
     (char *)"--aa",       (char *)"false",
+    (char *)"--csp",      (char *)"-6",
     (char *)"-e",         (char *)"/bin/sh", (char *)"-c", (char *)e_arg,
     NULL,
   };
