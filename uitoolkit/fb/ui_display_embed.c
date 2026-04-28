@@ -33,12 +33,28 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/input.h>   /* struct input_event for the pipe payload */
 #include <pthread.h>
 #include <unistd.h>
 
 #include "ui_fb_embed.h"
 #include "../ui_event_source.h"   /* ui_event_source_process for the pump */
+
+/* Cross-platform input event constants: just the few we need to
+ * route between kbd and mouse pipes. Numerically match Linux evdev
+ * so hosts on Linux can pass EV_KEY/EV_REL/BTN_MOUSE/KEY_OK
+ * directly; hosts on Mac/Win/BSD use the same constants without
+ * needing <linux/input.h>. */
+#ifndef EV_SYN
+#define EV_SYN     0x00
+#define EV_KEY     0x01
+#define EV_REL     0x02
+#endif
+#ifndef BTN_MOUSE
+#define BTN_MOUSE  0x110
+#endif
+#ifndef KEY_OK
+#define KEY_OK     0x160
+#endif
 
 /* --- static state --- */
 
@@ -125,14 +141,14 @@ static void set_use_console_backscroll(int use) { (void)use; }
  * arrive but get dropped on the floor; the dumper test path
  * doesn't exercise input so this is OK to land. */
 static int receive_mouse_event(int fd) {
-  struct input_event ev;
+  ui_fb_input_event_t ev;
   int n = 0;
   while (read(fd, &ev, sizeof(ev)) > 0) { n++; }
   return n;
 }
 
 static int receive_key_event(int fd) {
-  struct input_event ev;
+  ui_fb_input_event_t ev;
   int n = 0;
   while (read(fd, &ev, sizeof(ev)) > 0) { n++; }
   return n;
@@ -164,13 +180,10 @@ void ui_fb_embed_detach(void) {
 
 void ui_fb_embed_input(int type, int code, int value) {
   if (!_embed.attached) return;
-  struct input_event ev;
-  /* time field unused by mlterm's translators — leaving it zero is
-   * safe and avoids a gettimeofday() per event. */
-  ev.time.tv_sec = ev.time.tv_usec = 0;
-  ev.type = (unsigned short)type;
-  ev.code = (unsigned short)code;
-  ev.value = value;
+  ui_fb_input_event_t ev;
+  ev.type = (uint16_t)type;
+  ev.code = (uint16_t)code;
+  ev.value = (int32_t)value;
   /* Route by event type. Key codes (EV_KEY) above BTN_MOUSE / below
    * KEY_OK belong to the mouse channel; everything else is keyboard.
    * Crude but matches what evdev's per-device routing produces in

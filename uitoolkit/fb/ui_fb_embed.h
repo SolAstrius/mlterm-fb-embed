@@ -51,9 +51,25 @@ int ui_fb_embed_attach(uint32_t *buf, int width, int height, int stride_px);
  * before this returns. */
 void ui_fb_embed_detach(void);
 
-/* Push one Linux input event (evdev shape) into mlterm's event
- * queue. `type`/`code`/`value` are the standard EV_KEY / EV_REL /
- * EV_ABS / SYN triples. Lets the host substitute for what upstream
+/* Wire-shape of one input event the host pushes via
+ * ui_fb_embed_input(). Three fields, no timeval — the receive_*_event
+ * hooks downstream don't use the timestamp and zeroing it costs us a
+ * gettimeofday() per event we don't need.
+ *
+ * Numerically identical to the (type, code, value) trailing triple of
+ * Linux's evdev `struct input_event`, so a host on Linux can keep
+ * passing EV_KEY/KEY_A/etc. constants. Hosts on Mac/Win/BSD where
+ * <linux/input.h> doesn't exist are expected to ship a compatible
+ * key-code mapping themselves. */
+typedef struct ui_fb_input_event {
+  uint16_t type;
+  uint16_t code;
+  int32_t  value;
+} ui_fb_input_event_t;
+
+/* Push one input event into mlterm's event queue. Type/code/value
+ * follow the Linux evdev convention (EV_KEY + KEY_*, EV_REL + REL_*,
+ * EV_SYN + SYN_REPORT). Lets the host substitute for what upstream
  * mlterm-fb reads from /dev/input/eventN. */
 void ui_fb_embed_input(int type, int code, int value);
 
