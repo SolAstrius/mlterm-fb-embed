@@ -35,7 +35,6 @@
 /* Single-header lib comes in through here; STB_IMAGE_IMPLEMENTATION
  * is defined once in this translation unit only. */
 #define STB_IMAGE_IMPLEMENTATION
-#define STBI_NO_STDIO 0
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
 #include "../../tool/mlimgloader/stb_image.h"
