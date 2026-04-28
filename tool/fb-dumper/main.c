@@ -198,7 +198,6 @@ int main(int argc, char *argv[]) {
     (char *)"-bg",        (char *)"black",
     (char *)"-sb",        (char *)"false",
     (char *)"--aa",       (char *)"false",
-    (char *)"--csp",      (char *)"-6",
     (char *)"-e",         (char *)"/bin/sh", (char *)"-c", (char *)e_arg,
     NULL,
   };

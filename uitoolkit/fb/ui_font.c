@@ -813,12 +813,26 @@ face_found:
    * `face->ascender / max_advance_width` in EM units. The size we
    * picked via FT_Select_Size above populated face->size->metrics
    * with the actual pixel dims of the bitmap strike; pull
-   * height / width / ascent straight from there and skip the
-   * outline-based calcs entirely. */
+   * height / width / ascent straight from there.
+   *
+   * Use the 'M' glyph's per-glyph advance for the cell width
+   * (mirroring what the outline path does below) instead of
+   * face->size->metrics.max_advance. For BDF, max_advance reflects
+   * FONTBOUNDINGBOX which is the union of all glyphs' bounding
+   * boxes — often much larger than the per-glyph DWIDTH that
+   * actually controls cell-to-cell spacing. Cozette is the
+   * canonical example: BBX 13 wide but DWIDTH 6 per glyph; using
+   * BBX-width as cell-width inserts a phantom 7-px gap between
+   * every character. */
   if (face->units_per_EM == 0) {
     xfont->height = (force_height ? force_height : (u_int)(face->size->metrics.height >> 6));
-    xfont->width = xfont->width_full = (u_int)(face->size->metrics.max_advance >> 6);
     xfont->ascent = (force_ascent ? force_ascent : (u_int)(face->size->metrics.ascender >> 6));
+    if (load_glyph(face, format, get_glyph_index(face, 'M'), is_aa) &&
+        face->glyph->advance.x > 0) {
+      xfont->width = xfont->width_full = (u_int)(face->glyph->advance.x >> 6);
+    } else {
+      xfont->width = xfont->width_full = (u_int)(face->size->metrics.max_advance >> 6);
+    }
     goto skip_outline_metrics;
   }
 
