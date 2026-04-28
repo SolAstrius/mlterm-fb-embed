@@ -198,6 +198,11 @@ int main(int argc, char *argv[]) {
     (char *)"-bg",        (char *)"black",
     (char *)"-sb",        (char *)"false",
     (char *)"--aa",       (char *)"false",
+    /* fb-embed renders into a buffer sized exactly cols*CELL_PX_W ×
+     * rows*CELL_PX_H. mlterm's default --border=2 steals 2 px from
+     * each edge — at 80×24 that costs the bottom ~1.7 rows, so a
+     * write to (24,1) ends up clipped. Force the border off. */
+    (char *)"--border",   (char *)"0",
     (char *)"-e",         (char *)"/bin/sh", (char *)"-c", (char *)e_arg,
     NULL,
   };
