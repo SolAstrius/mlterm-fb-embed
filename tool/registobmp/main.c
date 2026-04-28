@@ -971,20 +971,12 @@ int regis_render_file(const char *path, regis_image_t *out) {
 
   if (!regis) return 0;
 
-  /* Hand pixel ownership to the caller. The interpreter wrote
-   * 0xAARRGGBB host-endian uint32s; on a little-endian host that
-   * lays out as B,G,R,A bytes in memory. embed_imgloader expects
-   * RGBA byte order (R at byte 0). Swap R↔B in place. */
-  size_t n = (size_t)regis->w * regis->h;
-  for (size_t i = 0; i < n; i++) {
-    uint32_t p = regis->pixels[i];
-    uint32_t a = (p >> 24) & 0xff;
-    uint32_t r = (p >> 16) & 0xff;
-    uint32_t g = (p >>  8) & 0xff;
-    uint32_t b =  p        & 0xff;
-    regis->pixels[i] = (a << 24) | (b << 16) | (g << 8) | r;
-  }
-
+  /* Hand pixel ownership to the caller. The interpreter writes
+   * 0xAARRGGBB host-endian uint32s, which is what mlterm's blit
+   * pipeline expects (ARGB host-endian = RGB888 in bits 0..23 +
+   * alpha in bits 24..31, matching the rgbinfo set in
+   * ui_display_embed.c::open_display: r_offset=16, g_offset=8,
+   * b_offset=0, a_offset=24). No byte swap needed. */
   out->pixels = regis->pixels;
   out->w = regis->w;
   out->h = regis->h;
