@@ -104,6 +104,18 @@ static void embed_blit_surface(SDL_Surface *src, SDL_Rect *srect,
 #endif /* USE_FB_EMBED */
 
 #define pixel_at(x, y) (((u_int32_t *)regis->pixels)[(y)*regis->w + (x)])
+/* Bounds-checked variant. The macro form blows up on negative or
+ * out-of-surface coordinates (negative y wraps into a huge positive
+ * row index → OOB write → SIGSEGV). draw_circle was the first user
+ * to actually drive negative coords (pen at edge + radius), but any
+ * primitive that doesn't pre-clip to the surface should use this. */
+#define pixel_set(x, y, color) do {                            \
+  int _px = (x), _py = (y);                                    \
+  if (_px >= 0 && _px < regis->w &&                            \
+      _py >= 0 && _py < regis->h) {                            \
+    ((u_int32_t *)regis->pixels)[_py * regis->w + _px] = (color); \
+  }                                                            \
+} while (0)
 #define REGIS_RGB(r, g, b) \
   (0xff000000 | (((r)*255 / 100) << 16) | (((g)*255 / 100) << 8) | ((b)*255 / 100))
 #define MAGIC_COLOR 0x0
@@ -244,14 +256,14 @@ static void draw_circle(int x, int y, int r, int color) {
       cy--;
     }
 
-    pixel_at(cy + x, cx + y) = color;
-    pixel_at(cx + x, cy + y) = color;
-    pixel_at(-cx + x, cy + y) = color;
-    pixel_at(-cy + x, cx + y) = color;
-    pixel_at(-cy + x, -cx + y) = color;
-    pixel_at(-cx + x, -cy + y) = color;
-    pixel_at(cx + x, -cy + y) = color;
-    pixel_at(cy + x, -cx + y) = color;
+    pixel_set(cy + x, cx + y, color);
+    pixel_set(cx + x, cy + y, color);
+    pixel_set(-cx + x, cy + y, color);
+    pixel_set(-cy + x, cx + y, color);
+    pixel_set(-cy + x, -cx + y, color);
+    pixel_set(-cx + x, -cy + y, color);
+    pixel_set(cx + x, -cy + y, color);
+    pixel_set(cy + x, -cx + y, color);
   }
 }
 
