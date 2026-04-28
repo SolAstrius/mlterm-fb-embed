@@ -20512,7 +20512,7 @@ if test "$fb_embed" = "yes" ; then
 		as_fn_error $? "--enable-fb-embed requires --with-gui=fb" "$LINENO" 5
 	fi
 	FB_EMBED_CFLAGS="-DUSE_FB_EMBED"
-						FB_EMBED_OBJ="embed_imgloader.o embed_regis.o"
+						FB_EMBED_OBJ="embed_imgloader.o embed_regis.o embed_regis_text.o"
 fi
 
 

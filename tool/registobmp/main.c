@@ -28,6 +28,7 @@
 
 #ifdef USE_FB_EMBED
 #include "regis_render.h"
+#include "../../uitoolkit/fb/embed_regis_text.h"
 #else
 #include <SDL.h>
 #ifdef USE_SDLTTF
@@ -412,16 +413,44 @@ static char *parse_quoted_text(char *text, char quote) {
 
 static char *command_text(char *cmd) {
 #ifdef USE_FB_EMBED
-  /* fb-embed: no font stack in the embed library. Walk past the
-   * options + quoted string so the parser keeps going, but don't
-   * paint anything. SDL_ttf + fontconfig would otherwise pull a
-   * 100-MiB chain of deps into the .so for a feature most ReGIS
-   * streams (vector geometry from VAX/PDP-era OSes) don't use. */
+  /* fb-embed: render via FreeType + the bundled BDF font we already
+   * link in for the terminal. Same dep set as the rest of the
+   * embed library — no SDL_ttf, no fontconfig. */
   if (*cmd == '(') {
     char *options[10];
+    int count;
     cmd++;
     if (!parse_options(options, &cmd)) {
       return cmd - 1;
+    }
+    /* Honour S(<n>) / S[w,h] for font size, same shape the
+     * standalone tool uses. Cozette has only one strike (6×13) so
+     * the size we compute is just a hint for variable-strike
+     * fonts; ensure_face_loaded() picks the available strike. */
+    for (count = 0; options[count]; count++) {
+      char *option = options[count];
+      if (*option == 'S') {
+        int size;
+        if (*(++option) == '[') {
+          int w, h;
+          option++;
+          if (parse_coordinate(&w, &h, &option)) {
+            size = (h < w * 2 ? h : w * 2) * 3 / 4;
+            if (size != fontsize) fontsize = size;
+          }
+        } else {
+          int height_tbl[] = {10,  20,  30,  45,  60,  75,  90,  105, 120,
+                              135, 150, 165, 180, 195, 210, 225, 240};
+          int width_tbl[]  = {9,   9,   18,  27,  36,  45,  54,  63,  72,
+                              81,  90,  99,  108, 117, 126, 135, 144};
+          int idx = atoi(option);
+          if (0 <= idx && idx <= 16) {
+            size = (height_tbl[idx] < width_tbl[idx] * 2
+                    ? height_tbl[idx] : width_tbl[idx] * 2) * 3 / 4;
+            if (size != fontsize) fontsize = size;
+          }
+        }
+      }
     }
   }
   char quote = *cmd;
@@ -429,6 +458,7 @@ static char *command_text(char *cmd) {
   if ((quote != '\'' && quote != '"') || !(cmd = parse_quoted_text(text, quote))) {
     return cmd;
   }
+  pen_x += embed_regis_draw_text(regis, pen_x, pen_y, fg_color, fontsize, text);
   return cmd;
 }
 #else
