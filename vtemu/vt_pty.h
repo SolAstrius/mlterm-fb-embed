@@ -105,6 +105,14 @@ int vt_set_pty_winsize(vt_pty_t *pty, u_int cols, u_int rows, u_int width_pix, u
 
 size_t vt_write_to_pty(vt_pty_t *pty, const u_char *buf, size_t len);
 
+/* fb-embed (downstream fork): install a host callback that receives
+ * bytes mlterm tries to write to a NULL pty (i.e. embed mode where
+ * the host doesn't open a real pseudo-terminal). The bytes are
+ * typically responses to host queries — DA / DSR / mouse reports /
+ * OSC 52 paste replies — that need to travel from the terminal back
+ * toward the guest. Pass NULL to disable. */
+void vt_pty_embed_set_write_cb(void (*cb)(const u_char *buf, size_t len));
+
 size_t vt_read_pty(vt_pty_t *pty, u_char *buf, size_t left);
 
 void vt_response_config(vt_pty_t *pty, const char *key, const char *value, int to_menu);

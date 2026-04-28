@@ -127,12 +127,38 @@ int vt_set_pty_winsize(vt_pty_t *pty, u_int cols, u_int rows, u_int width_pix, u
 /*
  * Return size of lost bytes.
  */
+/* fb-embed (downstream fork): when the host runs mlterm without a
+ * real PTY (i.e. bytes pushed directly via vt_term_write_loopback,
+ * "guest" lives on the OTHER side of the byte pipe), mlterm's
+ * reply paths still call vt_write_to_pty(vt_parser->pty, ...) for
+ * DA / DSR / mouse-report / paste responses. The upstream code
+ * derefs pty->left unconditionally, SIGSEGVing the worker on the
+ * first \033[c we see.
+ *
+ * Route the reply through a host-supplied callback when pty is
+ * NULL. Scev_term sets it via vt_pty_embed_set_write_cb(...) and
+ * forwards the bytes back to the guest's UART RX queue, which is
+ * exactly where typed keystrokes go — DA replies are conceptually
+ * "the terminal typing back at the host". */
+static void (*embed_pty_write_cb)(const u_char *buf, size_t len);
+
+void vt_pty_embed_set_write_cb(void (*cb)(const u_char *buf, size_t len)) {
+  embed_pty_write_cb = cb;
+}
+
 size_t vt_write_to_pty(vt_pty_t *pty, const u_char *buf,
                        size_t len /* if 0, flushing buffer. */) {
   const u_char *w_buf;
   size_t w_buf_size;
   ssize_t written_size;
   void *p;
+
+  if (!pty) {
+    if (embed_pty_write_cb && len > 0) {
+      embed_pty_write_cb(buf, len);
+    }
+    return len;  /* claim full acceptance — caller treats as PTY write */
+  }
 
   w_buf_size = pty->left + len;
   if (w_buf_size == 0) {
