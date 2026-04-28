@@ -49,6 +49,19 @@ typedef struct _GdkPixbuf {
 #define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include "stb_image_resize2.h"
 
+/* fb-embed (downstream fork): single-header BMP / JPEG / GIF
+ * decoder used as a fallback when the input file isn't PNG. The
+ * Win32 mlimgloader gets these formats for free via GDI+; the
+ * Linux libpng-based loader needed extras. Without this, ReGIS
+ * dumps converted to .bmp by registobmp can't be loaded back. */
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
+#define STBI_NO_PSD
+#define STBI_NO_PIC
+#define STBI_NO_PNM
+#include "stb_image.h"
+
 void gdk_pixbuf_ref(GdkPixbuf *pixbuf) {
   pixbuf->ref_count++;
 }
@@ -113,6 +126,14 @@ GdkPixbuf *gdk_pixbuf_new_from_file(const char *path) {
   png_image_begin_read_from_file(&png, path);
 
   if(PNG_IMAGE_FAILED(png)) {
+    /* fb-embed: not PNG — try stb_image (BMP / JPEG / GIF / TGA).
+     * stb_image always returns RGBA when desired_channels=4. */
+    int w, h, comp;
+    unsigned char *stb_data = stbi_load(path, &w, &h, &comp, 4);
+    if (stb_data) {
+      return gdk_pixbuf_new_from_data(stb_data, GDK_COLORSPACE_RGB, TRUE, 8,
+                                      w, h, w * 4, NULL, NULL);
+    }
     return NULL;
   }
 

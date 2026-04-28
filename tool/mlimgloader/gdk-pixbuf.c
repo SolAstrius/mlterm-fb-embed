@@ -473,6 +473,19 @@ int main(int argc, char **argv) {
   width = atoi(argv[2]);
   height = atoi(argv[3]);
 
+  /* fb-embed (downstream fork): if the input file is a captured
+   * ReGIS dump, hand it to registobmp first to convert to a .bmp
+   * we can read. Mirrors what the Win32 mlimgloader (gdiplus.cpp)
+   * and the no-image stub (none.c) already do — there's no
+   * architectural reason the Linux libpng-based mlimgloader
+   * shouldn't do the same. */
+  if (strstr(argv[4], ".rgs")) {
+    char *new_path = alloca(strlen(argv[4]) + 1);
+    if (new_path && convert_regis_to_bmp(strcpy(new_path, argv[4]))) {
+      argv[4] = new_path;
+    }
+  }
+
   /*
    * attr.width / attr.height aren't trustworthy because this program can be
    * called before window is actually resized.
