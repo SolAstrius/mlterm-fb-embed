@@ -761,16 +761,38 @@ static int load_ft(XFontStruct *xfont, const char *file_path, int32_t format, in
   }
 
 face_found:
-  if (face->units_per_EM == 0 /* units_per_EM can be 0 ("Noto Color Emoji") */) {
-    goto error;
-  }
+  /* fb-embed (downstream fork) — BDF / PCF / .otb fonts loaded via
+   * the freetype path have units_per_EM == 0 and no scalable
+   * outlines, but they DO carry a list of fixed bitmap sizes. Use
+   * FT_Select_Size to pick one that's >= our requested fontsize
+   * (or the largest available if all are smaller); skip the
+   * pixel-sizing + outline-glyph checks below since both are
+   * outline-only operations. Without this, BDF / PCF / .otb fonts
+   * pointed at via ~/.mlterm/font-fb fall through to the aafont
+   * fallback path. */
+  if (face->units_per_EM == 0) {
+    if ((face->face_flags & FT_FACE_FLAG_FIXED_SIZES) && face->num_fixed_sizes > 0) {
+      int chosen = 0;
+      int i;
+      for (i = 0; i < face->num_fixed_sizes; i++) {
+        chosen = i;
+        if ((u_int)face->available_sizes[i].height >= fontsize) break;
+      }
+      if (FT_Select_Size(face, chosen) != 0) {
+        goto error;
+      }
+      /* fall through, skipping the outline-glyph sanity check */
+    } else {
+      goto error;
+    }
+  } else {
+    FT_Set_Pixel_Sizes(face, fontsize, fontsize);
 
-  FT_Set_Pixel_Sizes(face, fontsize, fontsize);
+    if (!load_glyph(face, format, get_glyph_index(face, 'M'), is_aa)) {
+      bl_msg_printf("%s doesn't have outline glyphs.\n", file_path);
 
-  if (!load_glyph(face, format, get_glyph_index(face, 'M'), is_aa)) {
-    bl_msg_printf("%s doesn't have outline glyphs.\n", file_path);
-
-    goto error;
+      goto error;
+    }
   }
 
   xfont->format = format;
@@ -785,6 +807,20 @@ face_found:
   }
 
   face->generic.data = (void*)(((int)face->generic.data) + 1); /* ref_count */
+
+  /* fb-embed (downstream fork) — bitmap fonts (BDF / PCF / .otb)
+   * loaded via the freetype path have units_per_EM == 0 and no
+   * `face->ascender / max_advance_width` in EM units. The size we
+   * picked via FT_Select_Size above populated face->size->metrics
+   * with the actual pixel dims of the bitmap strike; pull
+   * height / width / ascent straight from there and skip the
+   * outline-based calcs entirely. */
+  if (face->units_per_EM == 0) {
+    xfont->height = (force_height ? force_height : (u_int)(face->size->metrics.height >> 6));
+    xfont->width = xfont->width_full = (u_int)(face->size->metrics.max_advance >> 6);
+    xfont->ascent = (force_ascent ? force_ascent : (u_int)(face->size->metrics.ascender >> 6));
+    goto skip_outline_metrics;
+  }
 
   if (force_height) {
     xfont->height = force_height;
@@ -895,6 +931,7 @@ face_found:
     }
   }
 
+skip_outline_metrics:
   if (is_aa) {
     /*
      * If xfont->is_aa is true, xfont->glyph_width_bytes is used only for
