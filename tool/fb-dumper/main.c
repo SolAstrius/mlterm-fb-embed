@@ -43,23 +43,25 @@
 #include "../../uitoolkit/ui_screen_manager.h"
 #include "../../uitoolkit/fb/ui_fb_embed.h"
 
-/* Set by the build via -DCOZETTE_OTB_PATH (see Makefile.in). The
+/* Set by the build via -DEMBED_FONT_PATH (see Makefile.in). The
  * dumper writes a one-line ~/.mlterm/font-fb pointing at this file
- * before main_loop_init runs, so first-time users get crisp bitmap
- * rendering without having to maintain mlterm config themselves. */
-#ifndef COZETTE_OTB_PATH
-#define COZETTE_OTB_PATH "vendor/cozette/cozette.otb"
+ * before main_loop_init runs, so first-time users get clean
+ * rendering without having to maintain mlterm config themselves.
+ * Must be a real .ttf — see Makefile.in for why .pcf/.otb don't
+ * work via the font-fb path. */
+#ifndef EMBED_FONT_PATH
+#define EMBED_FONT_PATH "vendor/jetbrains-mono/JetBrainsMono-Regular.ttf"
 #endif
 
 #define DEFAULT_COLS  80
 #define DEFAULT_ROWS  24
-/* Match Cozette's bitmap cell. mlterm reads the PCF's own size and
- * computes its grid as buffer_w/cell_w × buffer_h/cell_h, so the
- * buffer dims have to match the font, not the other way around. If
- * we ever swap fonts (Spleen 8x16, Tamzen, Terminus, …) bump these
- * to match. */
-#define CELL_PX_W     6
-#define CELL_PX_H     20
+/* JetBrains Mono Regular at mlterm's default font size renders
+ * roughly 9x18 per cell. mlterm computes its grid as
+ * buffer_w/cell_w × buffer_h/cell_h, so the buffer dims have to
+ * match the font's natural cell size or text gets misaligned.
+ * Adjust if the font is swapped. */
+#define CELL_PX_W     9
+#define CELL_PX_H     18
 #define DEFAULT_PUMP_MS 250
 
 /* PPM (P6) writer — see README for format rationale. */
@@ -129,10 +131,10 @@ int main(int argc, char *argv[]) {
    * fontconfig picks a proportional fallback at our cell size and
    * the rendered output has wide inconsistent letter spacing. */
   char font_abs[PATH_MAX];
-  if (!realpath(COZETTE_OTB_PATH, font_abs)) {
+  if (!realpath(EMBED_FONT_PATH, font_abs)) {
     fprintf(stderr,
         "warning: can't resolve font path '%s' (%s); mlterm will fall back\n",
-        COZETTE_OTB_PATH, strerror(errno));
+        EMBED_FONT_PATH, strerror(errno));
     font_abs[0] = '\0';
   }
   const char *home = getenv("HOME");
