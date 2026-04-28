@@ -42,6 +42,14 @@ void ui_font_config_destroy(ui_font_config_t *font_config);
 
 int ui_customize_font_file(const char *file, const char *key, const char *value, int save);
 
+/* fb-embed (downstream fork): when locked == 1, every subsequent
+ * read_all_conf() (called transitively from ui_acquire_font_config)
+ * skips bl_get_sys_rc_path() + bl_get_user_rc_path() and populates
+ * the font_config table from the in-memory custom_cache only. The
+ * host is expected to have populated that cache via
+ * ui_customize_font_file() before calling ui_font_manager_new(). */
+void ui_font_embed_lock_config(int locked);
+
 char *ui_get_config_font_name(ui_font_config_t *font_config, u_int font_size, vt_font_t font);
 
 char *ui_get_config_font_name2(const char *file, u_int font_size, const char *font_cs);

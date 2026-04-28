@@ -85,6 +85,12 @@ void vt_color_config_init(void);
 
 void vt_color_config_final(void);
 
+/* fb-embed (downstream fork): when locked == 1, vt_color_config_init()
+ * skips bl_get_sys_rc_path() + bl_get_user_rc_path() and starts the
+ * palette empty. The embedding host populates colors via
+ * vt_customize_color_file() instead. Idempotent. */
+void vt_color_embed_lock_config(int locked);
+
 int vt_customize_color_file(const char *color, const char *rgb, int save);
 
 char *vt_get_color_name(vt_color_t color);

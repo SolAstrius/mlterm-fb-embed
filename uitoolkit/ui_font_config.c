@@ -35,6 +35,16 @@ typedef struct custom_cache {
 
 /* --- static variables --- */
 
+/* fb-embed (downstream fork): when set, read_all_conf() skips both
+ * bl_get_sys_rc_path() and bl_get_user_rc_path() — i.e. neither
+ * /etc/mlterm/<rcfile> nor $HOME/.mlterm/<rcfile> are read. The
+ * embedding host is expected to have populated the in-memory
+ * custom_cache + per-font_config tables itself via
+ * ui_customize_font_file() prior to ui_font_manager_new(), giving
+ * a fully self-contained font lookup that depends on no host
+ * filesystem state. Set/cleared via ui_font_embed_lock_config(). */
+static int embed_font_config_locked = 0;
+
 #if defined(USE_FRAMEBUFFER) || defined(USE_CONSOLE) || defined(USE_WAYLAND) || defined(USE_SDL2)
 
 #if defined(USE_FREETYPE) && defined(USE_FONTCONFIG)
@@ -491,39 +501,58 @@ static int read_all_conf(ui_font_config_t *font_config,
     }
   }
 
-  if (!changed_font_file) {
-    if ((rcpath = bl_get_sys_rc_path(font_rcfile))) {
-      read_conf(font_config, rcpath);
-      free(rcpath);
+  /* fb-embed (downstream fork): if the host has locked us into
+   * embed mode, skip every disk read. The custom_cache table that
+   * apply_custom_cache() drains is populated entirely by host
+   * calls to ui_customize_font_file() — no /etc/mlterm, no
+   * $HOME/.mlterm. */
+  if (!embed_font_config_locked) {
+    if (!changed_font_file) {
+      if ((rcpath = bl_get_sys_rc_path(font_rcfile))) {
+        read_conf(font_config, rcpath);
+        free(rcpath);
+      }
     }
-  }
 
-  if (!changed_font_file || changed_font_file == font_rcfile) {
-    if ((rcpath = bl_get_user_rc_path(font_rcfile))) {
-      read_conf(font_config, rcpath);
-      free(rcpath);
+    if (!changed_font_file || changed_font_file == font_rcfile) {
+      if ((rcpath = bl_get_user_rc_path(font_rcfile))) {
+        read_conf(font_config, rcpath);
+        free(rcpath);
+      }
     }
   }
 
   apply_custom_cache(font_config, font_rcfile);
 
   if (font_rcfile2) {
-    if (!changed_font_file) {
-      if ((rcpath = bl_get_sys_rc_path(font_rcfile2))) {
+    if (!embed_font_config_locked) {
+      if (!changed_font_file) {
+        if ((rcpath = bl_get_sys_rc_path(font_rcfile2))) {
+          read_conf(font_config, rcpath);
+          free(rcpath);
+        }
+      }
+
+      if ((rcpath = bl_get_user_rc_path(font_rcfile2))) {
         read_conf(font_config, rcpath);
         free(rcpath);
       }
-    }
-
-    if ((rcpath = bl_get_user_rc_path(font_rcfile2))) {
-      read_conf(font_config, rcpath);
-      free(rcpath);
     }
 
     apply_custom_cache(font_config, font_rcfile2);
   }
 
   return 1;
+}
+
+/* fb-embed (downstream fork): public entry to lock/unlock the
+ * filesystem-read paths. When locked == 1, read_all_conf() above
+ * skips bl_get_sys_rc_path()/bl_get_user_rc_path() entirely; the
+ * font_config table is populated only from the in-memory
+ * custom_cache (which the host fills via ui_customize_font_file).
+ * Idempotent; safe to call before ui_font_manager_new(). */
+void ui_font_embed_lock_config(int locked) {
+  embed_font_config_locked = locked ? 1 : 0;
 }
 
 static int change_custom_cache(const char *file, const char *key, const char *value) {

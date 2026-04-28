@@ -564,10 +564,25 @@ char *vt_get_color_mode(void) {
 #endif
 }
 
+/* fb-embed (downstream fork): when set, vt_color_config_init()
+ * skips both bl_get_sys_rc_path() and bl_get_user_rc_path() —
+ * /etc/mlterm/color and $HOME/.mlterm/color stay un-read. The
+ * embedding host populates the palette via vt_customize_color_file()
+ * directly. Toggled by vt_color_embed_lock_config(). */
+static int embed_color_config_locked = 0;
+
+void vt_color_embed_lock_config(int locked) {
+  embed_color_config_locked = locked ? 1 : 0;
+}
+
 void vt_color_config_init(void) {
   char *rcpath;
 
   bl_map_new_with_size(vt_color_t, rgb_t, color_config, bl_map_hash_int, bl_map_compare_int, 16);
+
+  if (embed_color_config_locked) {
+    return;
+  }
 
   if ((rcpath = bl_get_sys_rc_path(color_file))) {
     read_conf(rcpath);
