@@ -311,6 +311,21 @@ void vt_response_config(vt_pty_t *pty, const char *key, const char *value, int t
  */
 char *vt_pty_get_slave_name(vt_pty_t *pty) {
   static char virt_name[9 + DIGIT_STR_LEN(int)+1];
+
+  /* fb-embed (downstream fork): in embed mode the host pushes
+   * bytes via vt_term_write_loopback() and never opens a real
+   * PTY, so pty == NULL. Multiple call sites in vt_parser.c
+   * compute file paths via `vt_pty_get_slave_name(...) + 5`
+   * (skipping the /dev/ prefix) and the upstream code derefs
+   * pty->slave / pty->master without a NULL check, SIGSEGVing
+   * the worker thread on the first sixel/regis/snapshot DCS.
+   * Return a stable synthesized name when pty is NULL — callers
+   * only need the +5 suffix to be a usable file basename. */
+  if (!pty) {
+    sprintf(virt_name, "/dev/embed-0");
+    return virt_name;
+  }
+
 #ifndef USE_WIN32API
   char *name;
 
