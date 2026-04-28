@@ -728,9 +728,24 @@ if test "$anti_alias" != "no"; then
 		if test "$have_ft" = "yes" ; then
 			FT_CFLAGS="$FT_CFLAGS -DUSE_FREETYPE "
 
+			dnl fb-embed (downstream fork): when --enable-fb-embed is on
+			dnl and the user did NOT explicitly pass --enable-fontconfig,
+			dnl default fontconfig OFF. Embed mode runs in hosts (JVM, mac,
+			dnl windows, sandboxed launchers) where the system fontconfig
+			dnl cache may be missing or stale, and the FcFontList scan that
+			dnl ui_font.c::get_ft_bitmap performs for complementary glyphs
+			dnl can wedge or hang. The host injects the font path via
+			dnl ui_customize_font_file() + ui_font_embed_lock_config(), so
+			dnl no system font lookup is needed at all. Hosts that DO want
+			dnl fontconfig in embed mode can still pass --enable-fontconfig.
+			fc_default="yes"
+			if test "x$enable_fb_embed" = "xyes" -a "x$enable_fontconfig" = "x" ; then
+				fc_default="no"
+			fi
+
 			AC_ARG_ENABLE(fontconfig,
 				[  --disable-fontconfig    use fontconfig with freetype on framebuffer or wayland @<:@default=enabled@:>@ ],
-	  		fontconfig=$enable_fontconfig, fontconfig="yes")
+	  		fontconfig=$enable_fontconfig, fontconfig="$fc_default")
 
 			if test "$fontconfig" != "no" -a "$have_fc" = "yes"; then
 				FT_CFLAGS="$FT_CFLAGS $FONTCONFIG_CFLAGS"

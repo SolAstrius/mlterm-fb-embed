@@ -20469,12 +20469,17 @@ if test "$anti_alias" != "no"; then
 		if test "$have_ft" = "yes" ; then
 			FT_CFLAGS="$FT_CFLAGS -DUSE_FREETYPE "
 
+																																	fc_default="yes"
+			if test "x$enable_fb_embed" = "xyes" -a "x$enable_fontconfig" = "x" ; then
+				fc_default="no"
+			fi
+
 			# Check whether --enable-fontconfig was given.
 if test ${enable_fontconfig+y}
 then :
   enableval=$enable_fontconfig; fontconfig=$enable_fontconfig
 else case e in #(
-  e) fontconfig="yes" ;;
+  e) fontconfig="$fc_default" ;;
 esac
 fi
 
