@@ -65,12 +65,20 @@ static void embed_free_surface(SDL_Surface *s) {
   free(s);
 }
 
-/* SDL_FillRect with rect==NULL means "fill whole surface" — only
- * usage in this file. */
+/* SDL_FillRect under USE_FB_EMBED: fill with TRANSPARENT (alpha=0),
+ * ignoring the requested color. Real DEC terminals composite the
+ * graphics plane over the text plane: bg-coloured pixels in the
+ * graphics plane are "show the text plane through". Modelling that
+ * here means the unwritten / S(E)-erased regions of the ReGIS
+ * canvas leave alpha=0, so the embed compositor (in scev_term)
+ * lets text show through. Drawing commands always write opaque
+ * pixels via REGIS_RGB which forces 0xff000000 in the high bits,
+ * so shapes themselves stay solid. */
 static void embed_fill_rect(SDL_Surface *s, SDL_Rect *rect, uint32_t color) {
   (void)rect;
+  (void)color;
   size_t n = (size_t)s->w * s->h;
-  for (size_t i = 0; i < n; i++) s->pixels[i] = color;
+  for (size_t i = 0; i < n; i++) s->pixels[i] = 0x00000000;
 }
 
 /* SDL_BlitSurface for the resize() path: copy a top-left sub-rect
