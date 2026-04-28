@@ -1474,17 +1474,34 @@ ui_display_t *ui_display_open(char *disp_name, u_int depth) {
         _disp.width = _disp.height;
         _disp.height = tmp;
       }
+#ifndef USE_FB_EMBED
     } else if (cursor_shape.shape == NULL) {
       /*
        * If ui_display_set_cursor_shape() which called make_cursor_shape() was
        * called, it is not necessary to call make_cursor_shape() here.
+       *
+       * fb-embed (downstream fork): host owns the cursor, mlterm
+       * doesn't render one into the embed buffer (num_opened_displays
+       * stays at 1 to keep the renderer's mouse-cursor sprite path
+       * disabled). Skipping make_cursor_shape() here drops the only
+       * malloc + sprite blit work for a cursor we'll never paint.
        */
       make_cursor_shape();
+#endif
     }
 
+#ifdef USE_FB_EMBED
+    /* fb-embed (downstream fork): no host environment lookups. The
+     * "name" field is debug-only ('lsof' / DISPLAY in error messages);
+     * a fixed string makes embed mode independent of the calling
+     * process' DISPLAY env, which on a headless / non-X host might
+     * not exist (Mac, Windows, sandboxed JVMs). */
+    _disp.name = ":embed";
+#else
     if (!(_disp.name = getenv("DISPLAY"))) {
       _disp.name = ":0.0";
     }
+#endif
 
 #ifndef USE_FB_EMBED
     /* Embed mode owns no host stdin — these touch the embedder's
