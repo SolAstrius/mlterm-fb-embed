@@ -213,6 +213,23 @@ typedef struct _XFontStruct {
   u_int16_t ascent;
   u_int8_t has_each_glyph_width_info;
 
+  /*
+   * fb-embed (downstream fork) — when the FT-loaded face is bitmap-only
+   * (BDF / PCF / .otb) and we requested a font size larger than the
+   * largest available bitmap strike, this is the integer factor we
+   * synthesize on top of the real bitmap (1, 2, 3, ...). The xfont's
+   * width / width_full / height / ascent already reflect the
+   * post-scale dims; glyph copy in get_ft_bitmap_intern() does
+   * nearest-neighbour pixel doubling when this is > 1. 1 means "use
+   * the bitmap as-is" and is the default for outline fonts and for
+   * bitmap fonts loaded at their native size.
+   *
+   * Drives DECDHL/DECDWL on bitmap fonts (the FB renderer would
+   * otherwise render the bottom half of double-height lines as
+   * blank, since a 13-px BDF can't be re-rasterised at 26 px).
+   */
+  u_int8_t scale_factor;
+
   /* for pcf */
   int16_t min_char_or_byte2;
   int16_t max_char_or_byte2;

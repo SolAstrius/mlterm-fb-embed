@@ -781,6 +781,25 @@ face_found:
       if (FT_Select_Size(face, chosen) != 0) {
         goto error;
       }
+      /* fb-embed (downstream fork) — if the requested fontsize is an
+       * integer multiple (>=2x) of the chosen bitmap strike, mark the
+       * xfont for nearest-neighbour synthesis at glyph copy time.
+       * This is what makes DECDHL / DECDWL work on bitmap fonts
+       * (cozette etc.): the FB renderer asks for fontsize *= 2 on
+       * double-height/width lines, the BDF can't re-rasterise, so
+       * without this the bottom half of every DH line renders blank.
+       *
+       * Only take 2x as the synthesis factor — 3x scaling on a 13-px
+       * cell looks blocky enough to be worse than just clipping. If
+       * the user really wants 3x they can ship a 39-px BDF strike. */
+      {
+        u_int real_h = (u_int)face->available_sizes[chosen].height;
+        if (real_h > 0 && fontsize >= real_h * 2) {
+          xfont->scale_factor = 2;
+        } else {
+          xfont->scale_factor = 1;
+        }
+      }
       /* fall through, skipping the outline-glyph sanity check */
     } else {
       goto error;
@@ -832,6 +851,16 @@ face_found:
       xfont->width = xfont->width_full = (u_int)(face->glyph->advance.x >> 6);
     } else {
       xfont->width = xfont->width_full = (u_int)(face->size->metrics.max_advance >> 6);
+    }
+    /* fb-embed — apply NN-synthesis factor to the reported metrics. From
+     * here on out, downstream code sees the post-scale cell dims; the
+     * underlying FT bitmap stays at its native size and gets doubled at
+     * glyph copy time in get_ft_bitmap_intern. */
+    if (xfont->scale_factor > 1) {
+      xfont->height *= xfont->scale_factor;
+      xfont->ascent *= xfont->scale_factor;
+      xfont->width *= xfont->scale_factor;
+      xfont->width_full *= xfont->scale_factor;
     }
     goto skip_outline_metrics;
   }
@@ -1308,6 +1337,100 @@ static u_char *get_ft_bitmap_intern(XFontStruct *xfont, u_int32_t code /* glyph 
           }
         }
       }
+    } else if (xfont->scale_factor > 1) {
+      /* fb-embed (downstream fork) — non-AA, non-rotated bitmap glyph
+       * with NN-synthesis enabled. Each src row is right-shifted by
+       * `left_pitch` bits to apply the per-glyph horizontal bearing
+       * (mirrors the unscaled left_pitch>0 path below), bit-doubled
+       * into the dst row, then memcpy-replicated `sf-1` more times
+       * for vertical scaling. Output is `pitch_out` bytes per
+       * scaled row, in `(rows+y)*sf` rows total. Cozette: src is
+       * 13×N with bitmap_left=1; output 26×2N with the bearing
+       * scaled to match. */
+      static const u_int16_t bit_double_lut[256] = {
+#define D2(x) (((x)&0x80?0xC000:0)|((x)&0x40?0x3000:0)|((x)&0x20?0x0C00:0)| \
+               ((x)&0x10?0x0300:0)|((x)&0x08?0x00C0:0)|((x)&0x04?0x0030:0)| \
+               ((x)&0x02?0x000C:0)|((x)&0x01?0x0003:0))
+#define D8(n) D2(n), D2(n+1), D2(n+2), D2(n+3), D2(n+4), D2(n+5), D2(n+6), D2(n+7)
+#define D64(n) D8(n), D8(n+8), D8(n+16), D8(n+24), D8(n+32), D8(n+40), D8(n+48), D8(n+56)
+        D64(0), D64(64), D64(128), D64(192)
+#undef D2
+#undef D8
+#undef D64
+      };
+      int sf = xfont->scale_factor;
+      int src_pitch = face->glyph->bitmap.pitch;
+
+      /* Decompose left_pitch into whole-byte and sub-byte shift,
+       * mirroring the unscaled path. Then build one shifted+doubled
+       * row at a time. */
+      int shift_bytes = left_pitch / 8;
+      int sub_shift   = left_pitch % 8;
+      /* Unscaled row width in bytes after shifting:
+       * shift_bytes leading zero bytes + (sub_shift ? 1 : 0)
+       * carry byte + src_pitch data bytes. */
+      int unscaled_pitch = shift_bytes + (sub_shift > 0 ? 1 : 0) + src_pitch;
+      int dst_pitch = unscaled_pitch * sf;
+      u_char scratch[64];          /* unscaled_pitch fits comfortably */
+      int b;
+      int yy;
+      int x;
+
+      pitch = dst_pitch;            /* glyph[0..1] is dst_pitch in bytes */
+
+      if (unscaled_pitch > (int)sizeof(scratch)) {
+        /* Defensive: BDFs we ship have tiny pitches (cozette: 1-3
+         * bytes/row). If some future face hits this, refuse rather
+         * than overrun scratch — caller treats NULL as "no glyph"
+         * and renders blank, same as a missing codepoint. */
+        return NULL;
+      }
+
+      if (!(glyph = next_glyph_buf(xfont, code,
+                                   GLYPH_HEADER_SIZE_MIN +
+                                   dst_pitch * (rows + y) * sf))) {
+        return NULL;
+      }
+
+      dst = glyph + GLYPH_HEADER_SIZE_MIN + dst_pitch * (y * sf);
+
+      for (count = 0; count < rows; count++) {
+        /* Build the unscaled, left-shifted row in scratch. */
+        memset(scratch, 0, unscaled_pitch);
+        if (sub_shift == 0) {
+          memcpy(scratch + shift_bytes, src, src_pitch);
+        } else {
+          scratch[shift_bytes] = (u_char)(src[0] >> sub_shift);
+          for (x = 1; x < src_pitch; x++) {
+            scratch[shift_bytes + x] =
+              (u_char)((src[x - 1] << (8 - sub_shift)) | (src[x] >> sub_shift));
+          }
+          scratch[shift_bytes + x] = (u_char)(src[x - 1] << (8 - sub_shift));
+        }
+        /* Bit-double scratch into the first dst row. */
+        for (b = 0; b < unscaled_pitch; b++) {
+          u_int16_t doubled = bit_double_lut[scratch[b]];
+          dst[2 * b]     = (u_char)(doubled >> 8);
+          dst[2 * b + 1] = (u_char)(doubled & 0xff);
+        }
+        /* Replicate sf-1 more times for vertical doubling. */
+        for (yy = 1; yy < sf; yy++) {
+          memcpy(dst + dst_pitch * yy, dst, dst_pitch);
+        }
+        src += face->glyph->bitmap.pitch;
+        dst += dst_pitch * sf;
+      }
+
+      /* Header — all metrics in scaled cell pixels. */
+      glyph[0] = (u_char)(dst_pitch >> 8);
+      glyph[1] = (u_char)(dst_pitch & 0xff);
+      if (face->glyph->bitmap_top < 0 || (xfont->format & FONT_ROTATED)) {
+        glyph[2] = 0;
+      } else {
+        glyph[2] = (u_char)BL_MIN(255, (face->glyph->bitmap_top + y) * sf);
+      }
+      glyph[3] = (u_char)BL_MIN(255, (rows + y) * sf);
+      return glyph;
     } else {
       pitch = face->glyph->bitmap.pitch;
 
