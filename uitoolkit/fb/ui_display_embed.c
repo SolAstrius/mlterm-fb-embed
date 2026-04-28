@@ -164,6 +164,28 @@ int ui_fb_embed_attach(uint32_t *buf, int width, int height, int stride_px) {
   _embed.height = height;
   _embed.stride_px = stride_px;
   _embed.attached = 1;
+
+  /* Reattach path. ui_display_open()'s body only runs once
+   * (gated on DISP_IS_INITED); on a second host attach it
+   * returns the existing _disp without re-running open_display(),
+   * which would otherwise refresh _display.fb to point at the new
+   * host buffer and reopen the input pipes the host previously
+   * detached. Do it here so the first ui_fb_embed_pump after a
+   * reattach paints into the right buffer. */
+  if (_disp.display == &_display) {
+    if (make_pipe(_embed.kbd_pipe) < 0 || make_pipe(_embed.mouse_pipe) < 0) {
+      bl_error_printf("embed: pipe() reattach failed: %s\n", strerror(errno));
+      _embed.attached = 0;
+      return -1;
+    }
+    _display.fb = _display.fb_base = (unsigned char *)buf;
+    _display.smem_len = (size_t)height * stride_px * sizeof(uint32_t);
+    _display.line_length = stride_px * sizeof(uint32_t);
+    _display.width  = _disp.width  = width;
+    _display.height = _disp.height = height;
+    _display.fd = _embed.kbd_pipe[0];
+  }
+
   return 0;
 }
 
