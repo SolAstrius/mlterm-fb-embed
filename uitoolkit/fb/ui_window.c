@@ -112,6 +112,11 @@ static int smooth_ensure_snap(size_t pixels) {
 /* Public: ui_screen sets target lines/sec + cell height before each
  * scroll dispatch. lps == 0 means jump (disable animator). */
 void ui_fb_smooth_scroll_set(int lps, u_int line_height) {
+  static int last_lps = -1;
+  if (lps != last_lps) {
+    fprintf(stderr, "[smooth] set lps=%d line_height=%u\n", lps, line_height);
+    last_lps = lps;
+  }
   _smooth.lps = lps;
   _smooth.line_height = line_height;
 }
@@ -225,6 +230,10 @@ static int scroll_region(ui_window_t *win, int src_x, int src_y, u_int width, u_
   int abs_src_y = src_y + win->y + win->vmargin;
   int abs_dst_x = dst_x + win->x + win->hmargin;
   int abs_dst_y = dst_y + win->y + win->vmargin;
+
+  fprintf(stderr, "[smooth] scroll_region lps=%d cell=%u src=(%d,%d) dst=(%d,%d) sz=(%u,%u)\n",
+          _smooth.lps, _smooth.line_height, abs_src_x, abs_src_y, abs_dst_x, abs_dst_y,
+          width, height);
 
   if (_smooth.lps > 0 && abs_src_x == abs_dst_x && abs_src_y != abs_dst_y &&
       _smooth.line_height > 0) {
