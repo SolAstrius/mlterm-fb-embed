@@ -89,6 +89,7 @@ typedef struct fb_smooth {
   size_t   snap_cap;    /* allocated capacity in pixels (for reuse) */
   unsigned step_60ths;  /* line_height * lps; pixel/tick = step_60ths/60 */
   unsigned accum_60ths; /* fractional carry */
+  int after_pending;    /* snap_after still needs to be captured */
 } fb_smooth_t;
 
 static fb_smooth_t _smooth = {0};
@@ -163,11 +164,17 @@ static void smooth_paste_region(const uint32_t *src, int x, int y, int w, int h)
 void ui_fb_smooth_scroll_tick(void) {
   if (!_smooth.active) return;
 
-  /* Capture the live AFTER state — mlterm just finished painting this
-   * tick, so the framebuffer holds the correct post-scroll content
-   * (including any new bottom-row glyphs). */
-  smooth_snap_region(_smooth.snap_after,
-                     _smooth.rgn_x, _smooth.rgn_y, _smooth.rgn_w, _smooth.rgn_h);
+  /* Capture AFTER exactly once — on the first tick of this animation,
+   * when scroll_region's caller has just finished painting the new
+   * content into the (now-vacated) bottom region. From tick 2 onwards
+   * the framebuffer holds the partial composite from the previous
+   * tick, so re-snapping would poison snap_after with progressively
+   * corrupt pixels and the animation would never converge. */
+  if (_smooth.after_pending) {
+    smooth_snap_region(_smooth.snap_after,
+                       _smooth.rgn_x, _smooth.rgn_y, _smooth.rgn_w, _smooth.rgn_h);
+    _smooth.after_pending = 0;
+  }
 
   /* Advance progress. step_60ths/60 pixels per tick (VT100 was 1
    * scan/frame; we generalise to fractional via integer accumulator). */
@@ -181,8 +188,14 @@ void ui_fb_smooth_scroll_tick(void) {
   }
 
   if (_smooth.progress == _smooth.total) {
-    /* Done — fb already shows AFTER. Just clear active. */
+    /* Animation complete — paste AFTER back into the framebuffer
+     * (the previous tick's composite is currently there) and clear
+     * active so worker_drain_input resumes draining the input ring. */
+    smooth_paste_region(_smooth.snap_after,
+                        _smooth.rgn_x, _smooth.rgn_y,
+                        _smooth.rgn_w, _smooth.rgn_h);
     _smooth.active = 0;
+    fprintf(stderr, "[smooth] anim done\n");
     return;
   }
 
@@ -276,6 +289,9 @@ static int scroll_region(ui_window_t *win, int src_x, int src_y, u_int width, u_
       _smooth.rgn_h = rgn_h;
       _smooth.step_60ths = (unsigned)_smooth.line_height * (unsigned)_smooth.lps;
       _smooth.accum_60ths = 0;
+      /* Tick will capture snap_after on its first run, after the
+       * caller's repaint of the vacated bottom rows has landed. */
+      _smooth.after_pending = 1;
       return 1;
     }
     /* Snap alloc failed → fall through to immediate scroll. */
