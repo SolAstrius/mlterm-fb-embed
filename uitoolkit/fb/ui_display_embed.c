@@ -218,7 +218,16 @@ void ui_fb_embed_input(int type, int code, int value) {
   (void)r;  /* full pipe = host pumping too slowly; drop is fine */
 }
 
+/* Forward decl — defined in fb/ui_window.c, only visible inside the
+ * fb backend. Advances the DECSCLM smooth-scroll animation by one
+ * frame. Cheap when no animation is in flight (one branch). */
+extern void ui_fb_smooth_scroll_tick(void);
+
 void ui_fb_embed_pump(void) {
   if (!_embed.attached) return;
   ui_event_source_pump_once_nonblock();
+  /* §4.7.8 (VT100 TM): smooth scroll moves data "one scan line in
+   * each frame." We treat each pump call as one frame — the host's
+   * cadence (typically 60 Hz) becomes the spec's 60 Hz frame rate. */
+  ui_fb_smooth_scroll_tick();
 }

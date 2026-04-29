@@ -346,6 +346,17 @@ int ui_window_is_scrollable(ui_window_t *win);
 #define ui_window_is_scrollable(win) ((win)->is_scrollable)
 #endif
 
+#ifdef USE_FRAMEBUFFER
+/* §5.123 / §4.7.8 (DEC VT spec) — DECSCLM smooth-scroll plumbing.
+ * fb backend only. ui_screen calls ui_fb_smooth_scroll_set() with the
+ * current target lines-per-second + cell pitch immediately before
+ * each ui_window_scroll_*_region() dispatch; lps == 0 means jump.
+ * ui_fb_smooth_scroll_active() is consumed by the embed host (e.g.
+ * scev_term) for §4.7.8 XOFF-equivalent backpressure. */
+void ui_fb_smooth_scroll_set(int lps, u_int line_height);
+int  ui_fb_smooth_scroll_active(void);
+#endif
+
 int ui_window_scroll_upward(ui_window_t *win, u_int height);
 
 int ui_window_scroll_upward_region(ui_window_t *win, int boundary_start, int boundary_end,

@@ -688,6 +688,18 @@ static void flush_scroll_cache(ui_screen_t *screen, int scroll_actual_screen) {
         beg_y = convert_row_to_y(screen, screen->scroll_cache_boundary_start);
         end_y = beg_y + ui_line_height(screen) * scroll_region_rows;
 
+#ifdef USE_FRAMEBUFFER
+        /* §5.123 (VT520): "When DECSCLM is set, the terminal adds
+         *  lines to the screen at a moderate, smooth rate."
+         *
+         * Push the current DECSCLM/DECSSCLS state into the fb backend
+         * just before the scroll. The backend reads it inside
+         * scroll_region() to decide jump-vs-animate. lps == 0 keeps
+         * jump scroll (the historic, pre-DECSCLM-set default). */
+        ui_fb_smooth_scroll_set(
+            vt_parser_scroll_lines_per_sec(screen->term->parser),
+            ui_line_height(screen));
+#endif
         if (scroll_cache_rows > 0) {
           ui_window_scroll_upward_region(&screen->window, beg_y, end_y, scroll_height);
         } else {

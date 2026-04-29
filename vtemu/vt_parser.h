@@ -85,6 +85,27 @@ typedef enum vt_alt_color_mode {
 
 } vt_alt_color_mode_t;
 
+/*
+ * §5.146 (VT520 Programmer Info): "DECSSCLS—Set Scroll Speed
+ *  ...  0, 1, 2, 3 or none → Smooth 2 (default)  9 lines/sec
+ *        4, 5, 6, 7, 8     → Smooth 4           18 lines/sec
+ *        9                 → Jump            as fast as received"
+ *
+ * §5.123: "DECSCLM—Scrolling Mode ... When DECSCLM is set, the
+ *  terminal adds lines to the screen at a moderate, smooth rate.
+ *  ... When DECSCLM is reset, the terminal can add lines to the
+ *  screen as fast as it receives them."
+ *
+ * The pair is a 1-bit DECSCLM (smooth on/off) plus a 2-bit DECSSCLS
+ * speed select. We expose a derived "scroll lines per second" via
+ * vt_parser_scroll_lines_per_sec(); 0 means jump (no animation).
+ */
+typedef enum vt_scroll_speed {
+  VT_SCROLL_SPEED_SMOOTH_2 = 0, /* DECSSCLS Ps in {0..3} — 9 lps */
+  VT_SCROLL_SPEED_SMOOTH_4 = 1, /* DECSSCLS Ps in {4..8} — 18 lps */
+  VT_SCROLL_SPEED_JUMP     = 2, /* DECSSCLS Ps == 9       — jump */
+} vt_scroll_speed_t;
+
 typedef enum vt_cursor_style {
   CS_BLOCK = 0x0,
   CS_UNDERLINE = 0x1,
@@ -324,6 +345,13 @@ typedef struct vt_parser {
   u_int use_locked_title : 1;
   u_int invoke_macro : 1;
 
+  /* DECSCLM smooth-scroll state (§5.123). use_smooth_scroll == 1 ⇔
+   * DECSCLM was set; scroll_speed selects between Smooth-2 / Smooth-4 /
+   * Jump per DECSSCLS (§5.146). The fb backend reads this each scroll
+   * via vt_parser_scroll_lines_per_sec(). */
+  u_int use_smooth_scroll : 1;
+  /* vt_scroll_speed_t */ u_int scroll_speed : 2;
+
 #ifdef USE_VT52
   u_int is_vt52_mode : 1;
 #endif
@@ -476,6 +504,23 @@ void vt_parser_report_mouse_tracking(vt_parser_t *vt_parser, int col, int row,
 #define vt_parser_is_visible_cursor(vt_parser) ((vt_parser)->is_visible_cursor)
 
 #define vt_parser_get_cursor_style(vt_parser) ((vt_parser)->cursor_style)
+
+/* §4.7.8 (VT100 TM, p. 4-95): "the smooth scroll rate is thus 6 lines
+ *  per second at 60 Hz frame rate."
+ * §5.146 (VT520): Smooth-2 = 9 lps, Smooth-4 = 18 lps, Jump = ∞.
+ *
+ * Returns 0 when scrolls should jump (DECSCLM reset, or DECSSCLS = 9),
+ * else the target lines-per-second. The fb backend converts this into
+ * a per-frame pixel step by dividing the cell height by lps × frame
+ * rate. We expose only the VT420+ Smooth-2/Smooth-4 rates; the older
+ * VT100 6-lps rate is reachable by a host that prefers it via a
+ * DECSSCLS extension Ps later (out of spec but cheap). */
+#define vt_parser_scroll_lines_per_sec(vt_parser)                          \
+  ((vt_parser)->use_smooth_scroll                                          \
+       ? ((vt_parser)->scroll_speed == VT_SCROLL_SPEED_JUMP     ? 0        \
+          : (vt_parser)->scroll_speed == VT_SCROLL_SPEED_SMOOTH_4 ? 18     \
+                                                                  : 9)     \
+       : 0)
 
 #define vt_parser_get_hide_pointer_mode(vt_parser) ((vt_parser)->hide_pointer_mode)
 

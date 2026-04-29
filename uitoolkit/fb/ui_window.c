@@ -38,6 +38,178 @@ static ui_color_t black = {TP_COLOR, 0, 0, 0, 0};
 
 static int click_interval = 250; /* millisecond, same as xterm. */
 
+/* --- DECSCLM smooth-scroll animator (fb backend only) ---
+ *
+ * §4.7.8 (VT100 TM, p. 4-95–96): "Instead of moving one character
+ *  height or 10 scan lines in a single frame, the data moves up or
+ *  down one scan line in each frame. The smooth scroll rate is thus 6
+ *  lines per second at 60 Hz frame rate. ... For any given line feed,
+ *  the effect on the screen is delayed by two frames. Line feeds may
+ *  queue up so that scrolling is continuous."
+ *
+ * §5.146 (VT520): "0, 1, 2, 3 or none → Smooth 2 (9 lines/sec);
+ *                  4..8 → Smooth 4 (18 lines/sec); 9 → Jump."
+ *
+ * Strategy: when DECSCLM is set and a vertical scroll arrives, snap
+ * the pre-scroll region pixels into snap_before, perform the actual
+ * memmove (so mlterm's subsequent paint of the new bottom line lands
+ * in the right place), and queue an animation. ui_smooth_scroll_tick()
+ * is called at the END of each ui_fb_embed_pump() — it captures the
+ * current framebuffer's region as the live "AFTER" state and
+ * composites a partial-progress frame back into the framebuffer.
+ *
+ * Composite formula at progress P ∈ (0, total_pixels):
+ *   For row R in [0, region_h):
+ *     if dir == +1 (upward scroll, content moves up):
+ *       R <  rh - P:  fb[R] = before[R + P]
+ *       R >= rh - P:  fb[R] = after [R - total + P]
+ *     if dir == -1 (downward scroll, content moves down):
+ *       R <  P:       fb[R] = after [total - P + R]
+ *       R >= P:       fb[R] = before[R - P]
+ *   At P == total_pixels: animation completes; framebuffer naturally
+ *   contains AFTER without further compositing.
+ *
+ * Single active animation. If a new scroll arrives mid-animation we
+ * snap the current AFTER as the new BEFORE (i.e. complete the prior
+ * animation visually) and start the new one — matches §4.7.8's
+ * "Line feeds may queue up so that scrolling is continuous." */
+
+typedef struct fb_smooth {
+  int lps;              /* current target lines/sec (0 = jump/disabled) */
+  u_int line_height;    /* cell height in pixels (set by ui_screen) */
+  int active;           /* animation in flight */
+  int dir;              /* +1 upward, -1 downward */
+  int total;            /* total motion in pixels */
+  int progress;         /* pixels animated so far */
+  int rgn_x, rgn_y;     /* absolute fb coords of the region */
+  int rgn_w, rgn_h;
+  uint32_t *snap_before;
+  uint32_t *snap_after;
+  size_t   snap_cap;    /* allocated capacity in pixels (for reuse) */
+  unsigned step_60ths;  /* line_height * lps; pixel/tick = step_60ths/60 */
+  unsigned accum_60ths; /* fractional carry */
+} fb_smooth_t;
+
+static fb_smooth_t _smooth = {0};
+
+/* Allocate or grow snap buffers if region size increased. */
+static int smooth_ensure_snap(size_t pixels) {
+  if (pixels <= _smooth.snap_cap) return 1;
+  free(_smooth.snap_before);
+  free(_smooth.snap_after);
+  _smooth.snap_before = malloc(pixels * sizeof(uint32_t));
+  _smooth.snap_after  = malloc(pixels * sizeof(uint32_t));
+  if (!_smooth.snap_before || !_smooth.snap_after) {
+    free(_smooth.snap_before); _smooth.snap_before = NULL;
+    free(_smooth.snap_after);  _smooth.snap_after  = NULL;
+    _smooth.snap_cap = 0;
+    return 0;
+  }
+  _smooth.snap_cap = pixels;
+  return 1;
+}
+
+/* Public: ui_screen sets target lines/sec + cell height before each
+ * scroll dispatch. lps == 0 means jump (disable animator). */
+void ui_fb_smooth_scroll_set(int lps, u_int line_height) {
+  _smooth.lps = lps;
+  _smooth.line_height = line_height;
+}
+
+/* Public: scev_term consults this in the worker thread to decide
+ * whether to drain its input ring this tick — returning 1 throttles
+ * the guest, matching the §4.7.8 XOFF backpressure that real VT100s
+ * applied while a smooth scroll was in progress. */
+int ui_fb_smooth_scroll_active(void) {
+  return _smooth.active;
+}
+
+/* Snapshot a 32bpp ARGB region from the framebuffer into `out`. */
+static void smooth_snap_region(uint32_t *out, int x, int y, int w, int h) {
+  u_int ndisp = 0;
+  ui_display_t **disps = ui_get_opened_displays(&ndisp);
+  if (ndisp == 0 || !disps || !disps[0]) return;
+  size_t stride_px = disps[0]->display->line_length / 4;
+  uint32_t *fb = (uint32_t *)disps[0]->display->fb;
+  for (int r = 0; r < h; r++) {
+    memcpy(out + (size_t)r * w,
+           fb + (size_t)(y + r) * stride_px + x,
+           (size_t)w * sizeof(uint32_t));
+  }
+}
+
+/* Restore: paste a region into the framebuffer. */
+static void smooth_paste_region(const uint32_t *src, int x, int y, int w, int h) {
+  u_int ndisp = 0;
+  ui_display_t **disps = ui_get_opened_displays(&ndisp);
+  if (ndisp == 0 || !disps || !disps[0]) return;
+  size_t stride_px = disps[0]->display->line_length / 4;
+  uint32_t *fb = (uint32_t *)disps[0]->display->fb;
+  for (int r = 0; r < h; r++) {
+    memcpy(fb + (size_t)(y + r) * stride_px + x,
+           src + (size_t)r * w,
+           (size_t)w * sizeof(uint32_t));
+  }
+}
+
+/* Public: advance one animation step. Called at the tail of each
+ * ui_fb_embed_pump. Cheap when not active. */
+void ui_fb_smooth_scroll_tick(void) {
+  if (!_smooth.active) return;
+
+  /* Capture the live AFTER state — mlterm just finished painting this
+   * tick, so the framebuffer holds the correct post-scroll content
+   * (including any new bottom-row glyphs). */
+  smooth_snap_region(_smooth.snap_after,
+                     _smooth.rgn_x, _smooth.rgn_y, _smooth.rgn_w, _smooth.rgn_h);
+
+  /* Advance progress. step_60ths/60 pixels per tick (VT100 was 1
+   * scan/frame; we generalise to fractional via integer accumulator). */
+  _smooth.accum_60ths += _smooth.step_60ths;
+  int step_px = (int)(_smooth.accum_60ths / 60);
+  _smooth.accum_60ths %= 60;
+  if (step_px < 1) step_px = 1;  /* never stall */
+  _smooth.progress += step_px;
+  if (_smooth.progress >= _smooth.total) {
+    _smooth.progress = _smooth.total;
+  }
+
+  if (_smooth.progress == _smooth.total) {
+    /* Done — fb already shows AFTER. Just clear active. */
+    _smooth.active = 0;
+    return;
+  }
+
+  /* Composite frame at current progress into the framebuffer. */
+  int P = _smooth.progress;
+  int rh = _smooth.rgn_h;
+  int rw = _smooth.rgn_w;
+  int total = _smooth.total;
+  u_int ndisp = 0;
+  ui_display_t **disps = ui_get_opened_displays(&ndisp);
+  if (ndisp == 0 || !disps || !disps[0]) return;
+  size_t stride_px = disps[0]->display->line_length / 4;
+  uint32_t *fb = (uint32_t *)disps[0]->display->fb;
+
+  for (int R = 0; R < rh; R++) {
+    int abs_y = _smooth.rgn_y + R;
+    uint32_t *fb_row = fb + (size_t)abs_y * stride_px + _smooth.rgn_x;
+    int src_R;
+    const uint32_t *src;
+    if (_smooth.dir == 1) {
+      if (R < rh - P) { src = _smooth.snap_before; src_R = R + P; }
+      else            { src = _smooth.snap_after;  src_R = R - total + P; }
+    } else {
+      if (R < P)      { src = _smooth.snap_after;  src_R = total - P + R; }
+      else            { src = _smooth.snap_before; src_R = R - P; }
+    }
+    /* Defensive clamp — should never trigger if the formula is right. */
+    if (src_R < 0) src_R = 0;
+    if (src_R >= rh) src_R = rh - 1;
+    memcpy(fb_row, src + (size_t)src_R * rw, (size_t)rw * sizeof(uint32_t));
+  }
+}
+
 /* --- static functions --- */
 
 static int scroll_region(ui_window_t *win, int src_x, int src_y, u_int width, u_int height,
@@ -46,8 +218,60 @@ static int scroll_region(ui_window_t *win, int src_x, int src_y, u_int width, u_
     return 0;
   }
 
-  ui_display_copy_lines(win->disp, src_x + win->x + win->hmargin, src_y + win->y + win->vmargin,
-                        dst_x + win->x + win->hmargin, dst_y + win->y + win->vmargin,
+  /* Smooth-scroll fast path: vertical motion only (src_x == dst_x).
+   * §5.123 / §4.7.8 — DECSCLM applies to vertical scrolls only; SU/SD
+   * (left/right) keep jump semantics. */
+  int abs_src_x = src_x + win->x + win->hmargin;
+  int abs_src_y = src_y + win->y + win->vmargin;
+  int abs_dst_x = dst_x + win->x + win->hmargin;
+  int abs_dst_y = dst_y + win->y + win->vmargin;
+
+  if (_smooth.lps > 0 && abs_src_x == abs_dst_x && abs_src_y != abs_dst_y &&
+      _smooth.line_height > 0) {
+    int dir = (abs_src_y > abs_dst_y) ? 1 : -1;
+    int motion = dir == 1 ? (abs_src_y - abs_dst_y) : (abs_dst_y - abs_src_y);
+
+    /* Region union: covers both src and dst rows so the AFTER snapshot
+     * has both the moved content and the freshly-painted vacated area. */
+    int rgn_y = (abs_src_y < abs_dst_y ? abs_src_y : abs_dst_y);
+    int rgn_h = (abs_src_y > abs_dst_y ? abs_src_y : abs_dst_y) + (int)height - rgn_y;
+
+    size_t pixels_needed = (size_t)width * rgn_h;
+    if (smooth_ensure_snap(pixels_needed)) {
+      /* If an animation is already in flight, finalize it: paste its
+       * AFTER into the framebuffer first so the new BEFORE we snap
+       * here reflects the "fully scrolled" prior state. §4.7.8 line
+       * feeds-may-queue chaining. */
+      if (_smooth.active) {
+        smooth_paste_region(_smooth.snap_after,
+                            _smooth.rgn_x, _smooth.rgn_y,
+                            _smooth.rgn_w, _smooth.rgn_h);
+        _smooth.active = 0;
+      }
+
+      smooth_snap_region(_smooth.snap_before, abs_dst_x, rgn_y, (int)width, rgn_h);
+
+      /* Perform the actual scroll — mlterm's caller will paint the new
+       * content into the vacated rows after we return. */
+      ui_display_copy_lines(win->disp, abs_src_x, abs_src_y, abs_dst_x, abs_dst_y,
+                            width, height);
+
+      _smooth.active = 1;
+      _smooth.dir = dir;
+      _smooth.total = motion;
+      _smooth.progress = 0;
+      _smooth.rgn_x = abs_dst_x;
+      _smooth.rgn_y = rgn_y;
+      _smooth.rgn_w = (int)width;
+      _smooth.rgn_h = rgn_h;
+      _smooth.step_60ths = (unsigned)_smooth.line_height * (unsigned)_smooth.lps;
+      _smooth.accum_60ths = 0;
+      return 1;
+    }
+    /* Snap alloc failed → fall through to immediate scroll. */
+  }
+
+  ui_display_copy_lines(win->disp, abs_src_x, abs_src_y, abs_dst_x, abs_dst_y,
                         width, height);
 
   return 1;

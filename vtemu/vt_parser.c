@@ -172,6 +172,7 @@ typedef enum {
   DECMODE_1 = 0,
   DECMODE_2,
   DECMODE_3,
+  DECMODE_4,
   DECMODE_5,
   DECMODE_6,
   DECMODE_7,
@@ -230,7 +231,7 @@ typedef struct area {
 
 static u_int16_t vtmodes[] = {
   /* DECSET/DECRST */
-  1, 2, 3, 5, 6, 7, 25, 40, 47, 66, 67, 69, 80, 95, 116, 117,
+  1, 2, 3, 4, 5, 6, 7, 25, 40, 47, 66, 67, 69, 80, 95, 116, 117,
   1000, 1002, /* Don't add an entry between 1000 and 1002 (see set_vtmode()) */
   1003, 1004,
   1005, 1006, 1015, 1016, /* Don't add an entry between 1005 and 1016 (see set_vtmode()) */
@@ -3911,7 +3912,7 @@ static int get_vtmode(vt_parser_t *vt_parser, int mode) {
       mode == 19 /* DECPEX (Ignore DECSTBM in MC and DECMC) */ ||
       mode == 1007 /* Alternate Scroll Mode */) {
     return 3; /* permanently set */
-  } else if (mode == 4 /* DECSCLM (smooth scroll) */ || mode == 9 /* X10 mouse report */ ||
+  } else if (mode == 9 /* X10 mouse report */ ||
              mode == 38 /* Tek */ || mode == 45 /* reverse wraparound */ ||
              mode == 1001 /* highlight mouse tracking */ ||
              mode == 1011 /* scroll to bottom on key press */ ||
@@ -3988,11 +3989,22 @@ static void set_vtmode(vt_parser_t *vt_parser, int mode, int flag) {
     }
     break;
 
-#if 0
   case DECMODE_4:
-    /* DECSCLM smooth scrolling */
+    /* §5.123 (VT520 Programmer Info): "DECSCLM—Scrolling Mode ...
+     *  When DECSCLM is set, the terminal adds lines to the screen at a
+     *  moderate, smooth rate. ... When DECSCLM is reset, the terminal
+     *  can add lines to the screen as fast as it receives them."
+     *
+     * §4.7.8 (VT100 Tech Manual, p. 4-95): "Instead of moving one
+     *  character height or 10 scan lines in a single frame, the data
+     *  moves up or down one scan line in each frame. The smooth scroll
+     *  rate is thus 6 lines per second at 60 Hz frame rate."
+     *
+     * Default DECSSCLS speed when DECSCLM is set is Smooth-2 (9 lps,
+     * §5.146). The fb backend reads use_smooth_scroll +
+     * vt_parser_scroll_lines_per_sec() at scroll time. */
+    vt_parser->use_smooth_scroll = flag ? 1 : 0;
     break;
-#endif
 
   case DECMODE_5:
     /* DECSCNM */
@@ -5318,6 +5330,27 @@ inline static int parse_vt100_escape_sequence(
             vt_parser->cursor_style = CS_BAR|CS_BLINK;
           } else if (ps[0] == 6) {
             vt_parser->cursor_style = CS_BAR;
+          }
+        } else if (*str_p == 'p') {
+          /* §5.146 (VT520): "DECSSCLS—Set Scroll Speed ... CSI Ps SP p
+           *   Ps                           Scroll Speed
+           *   0, 1, 2, 3 or none           Smooth 2 (default)
+           *   4, 5, 6, 7, 8                Smooth 4
+           *   9                            Jump"
+           *
+           * Buckets per the spec; -1 (no parameter) maps to Smooth-2,
+           * matching "or none" in the table. DECSSCLS does not by
+           * itself enable smooth scrolling — that's DECSCLM's job
+           * (§5.146: "The escape sequence DECSCLM can change the
+           * scroll speed between Smooth 2 and Jump scroll."). It just
+           * stages the speed for when DECSCLM is (or becomes) set. */
+          int sps = ps[0];
+          if (sps <= 3) {
+            vt_parser->scroll_speed = VT_SCROLL_SPEED_SMOOTH_2;
+          } else if (sps <= 8) {
+            vt_parser->scroll_speed = VT_SCROLL_SPEED_SMOOTH_4;
+          } else {
+            vt_parser->scroll_speed = VT_SCROLL_SPEED_JUMP;
           }
         } else {
           if (ps[0] <= 0) {
