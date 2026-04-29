@@ -2,6 +2,7 @@
 
 #include "../ui_window.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <pobl/bl_debug.h>
 #include <pobl/bl_mem.h>
