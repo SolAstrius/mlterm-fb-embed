@@ -427,6 +427,35 @@ typedef int XFontSet; /* dummy */
 
 #ifndef __linux__ /* FreeBSD */
 
+#if !defined(__FreeBSD__)
+/*
+ * fb-embed (downstream fork): the framebuffer backend is being built
+ * on a host that is neither Linux nor *BSD (macOS / Windows, via zig
+ * cc). The header that supplies these scancode tokens — <linux/input.h>
+ * on Linux, <sys/kbio.h> on FreeBSD — does not exist here, so the
+ * FreeBSD-shaped KEY_* table below can't resolve LSH/RSH/.../F().
+ *
+ * They feed the XK_* keysym constants further down, which ui_screen.c
+ * compares against. In the embed build those comparisons are never
+ * exercised at runtime: receive_key_event() (ui_display_embed.c) only
+ * drains its pipe, and the embedding host (the JVM) translates key
+ * events into terminal byte sequences directly. So these only need to
+ * compile. Values mirror linux/input-event-codes.h, honouring the
+ * embed input contract's "numerically match Linux evdev" promise in
+ * case host evdev events are ever routed through receive_key_event().
+ */
+#define LSH  42   /* KEY_LEFTSHIFT  */
+#define RSH  54   /* KEY_RIGHTSHIFT */
+#define LCTR 29   /* KEY_LEFTCTRL   */
+#define RCTR 97   /* KEY_RIGHTCTRL  */
+#define LALT 56   /* KEY_LEFTALT    */
+#define RALT 100  /* KEY_RIGHTALT   */
+#define CLK  58   /* KEY_CAPSLOCK   */
+#define NLK  69   /* KEY_NUMLOCK    */
+#define SLK  70   /* KEY_SCROLLLOCK */
+#define F(n) (58 + (n)) /* KEY_F1..KEY_F10 == 59..68 */
+#endif /* !__FreeBSD__ */
+
 #define KEY_CLEAR 0xff    /* dummy */
 #define KEY_LINEFEED 0xfe /* dummy */
 #define KEY_LEFTSHIFT LSH

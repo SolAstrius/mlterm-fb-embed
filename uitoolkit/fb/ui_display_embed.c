@@ -126,7 +126,13 @@ static int open_display(u_int depth) {
    * also avoids num_opened_displays > 1, which makes the renderer
    * double-paint cells in some paths. */
   _mouse.fd = -1;
+#ifdef __linux__
+  /* Linux exposes num_opened_displays as a writable variable. On other
+   * hosts it is a macro, (MOUSE_IS_INITED ? 2 : 1), which already yields
+   * 1 here because _mouse.fd == -1 — so no assignment is needed (or
+   * possible). */
   num_opened_displays = 1;
+#endif
 
   return 1;
 }

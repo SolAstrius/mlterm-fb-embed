@@ -1021,8 +1021,10 @@ static int check_virtual_kbd(XButtonEvent *bev) {
 #define WORD_COLOR_TO_BYTE(color) ((color)&0xff)
 #endif
 
+#ifndef USE_FB_EMBED
 static int cmap_init(void);
 static void cmap_final(void);
+#endif
 static int get_active_console(void);
 static int receive_stdin_key_event(void);
 
@@ -1217,6 +1219,18 @@ static int receive_stdin_key_event(void) {
 
 #endif /* __FreeBSD__ */
 
+#ifndef USE_FB_EMBED
+/*
+ * fb-embed (downstream fork): the palette (cmap) machinery drives a
+ * low-depth hardware framebuffer through FBIOGETCMAP / FBIOPUTCMAP and
+ * dereferences struct fb_cmap — neither of which exists off-Linux/BSD.
+ * The embed buffer is always 32bpp truecolor, so none of this runs
+ * (_display.cmap stays NULL). The only callers are the per-platform
+ * open files (ui_display_linux.c etc.), all excluded from the embed
+ * build; the two references that remain in this file (cmap_final in
+ * ui_display_close_all, cmap_init in ui_display_reset_cmap) are guarded
+ * the same way. So the whole block is compiled out here.
+ */
 static fb_cmap_t *cmap_new(int num_colors) {
   fb_cmap_t *cmap;
 
@@ -1445,6 +1459,7 @@ static void cmap_final(void) {
   free(_display.cmap);
   free(_display.color_cache);
 }
+#endif /* !USE_FB_EMBED */
 
 /* --- global functions --- */
 
@@ -1572,9 +1587,11 @@ void ui_display_close_all(void) {
     set_use_console_backscroll(1);
 #endif
 
+#ifndef USE_FB_EMBED
     if (CMAP_IS_INITED) {
       cmap_final();
     }
+#endif
 
     if (_display.fd != STDIN_FILENO) {
       close(_display.fd);
@@ -1737,11 +1754,16 @@ int ui_display_reset_cmap(void) {
     memset(_display.color_cache, 0, sizeof(*_display.color_cache));
   }
 
+#ifdef USE_FB_EMBED
+  /* Truecolor embed buffer has no hardware palette to reset. */
+  return 0;
+#else
   return _display.cmap && cmap_init()
 #ifdef USE_GRF
          && gpal_init(((fb_reg_t*)_display.fb)->gpal)
 #endif
       ;
+#endif
 }
 
 #ifdef WALL_PICTURE_SIXEL_REPLACES_SYSTEM_PALETTE
@@ -2326,6 +2348,11 @@ void ui_display_reset_input_method_window(void) {
 
 /* seek the closest color */
 int ui_cmap_get_closest_color(u_long *closest, int red, int green, int blue) {
+#ifdef USE_FB_EMBED
+  /* Truecolor embed buffer: pixels are packed directly from RGB, there
+   * is no palette to search. _display.cmap is always NULL here. */
+  return 0;
+#else
   u_int segment;
   u_int offset;
   u_int color;
@@ -2422,9 +2449,14 @@ end:
 #endif
 
   return 1;
+#endif /* !USE_FB_EMBED */
 }
 
 int ui_cmap_get_pixel_rgb(u_int8_t *red, u_int8_t *green, u_int8_t *blue, u_long pixel) {
+#ifdef USE_FB_EMBED
+  /* No palette in the truecolor embed buffer. */
+  return 0;
+#else
 #ifdef USE_GRF
   if (grf0_fd != -1 && !use_tvram_cmap && pixel == TP_COLOR) {
     return 0;
@@ -2436,6 +2468,7 @@ int ui_cmap_get_pixel_rgb(u_int8_t *red, u_int8_t *green, u_int8_t *blue, u_long
   *blue = WORD_COLOR_TO_BYTE(_display.cmap->blue[pixel]);
 
   return 1;
+#endif /* !USE_FB_EMBED */
 }
 
 #ifdef DEBUG
