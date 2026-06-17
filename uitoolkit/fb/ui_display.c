@@ -2,14 +2,21 @@
 
 #include "ui_display.h"
 
+#include <pobl/bl_def.h> /* USE_WIN32API (define before the guards below) */
+
 #include <stdio.h>     /* printf */
 #include <unistd.h>    /* STDIN_FILENO */
 #include <fcntl.h>     /* open */
-#include <sys/mman.h>  /* mmap */
-#include <sys/ioctl.h> /* ioctl */
 #include <string.h>    /* memset/memcpy */
 #include <stdlib.h>    /* getenv */
+/* Real-framebuffer device layer: mmap()'d /dev/fb0, evdev ioctls and
+ * console termios. Every use is under #ifndef USE_FB_EMBED; these
+ * headers don't exist on Windows (mingw), so gate them out there too. */
+#ifndef USE_WIN32API
+#include <sys/mman.h>  /* mmap */
+#include <sys/ioctl.h> /* ioctl */
 #include <termios.h>
+#endif
 
 #include <pobl/bl_debug.h>
 #include <pobl/bl_privilege.h> /* bl_priv_change_e(u|g)id */
@@ -153,7 +160,9 @@ static int use_ansi_colors = 1;
 #endif
 static int rotate_display = 0;
 
-static struct termios orig_tm;
+#ifndef USE_WIN32API
+static struct termios orig_tm;  /* saved console state (real-fb path only) */
+#endif
 
 static struct cursor_shape {
   char *shape;

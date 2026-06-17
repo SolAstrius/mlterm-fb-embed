@@ -4,10 +4,11 @@
 
 #include <pobl/bl_def.h> /* USE_WIN32API */
 
+#include <time.h>         /* clock_gettime, struct timespec (embed pump) */
+
 #ifndef USE_WIN32API
 #include <string.h>       /* memset/memcpy */
 #include <sys/time.h>     /* timeval */
-#include <time.h>         /* clock_gettime, struct timespec (embed pump) */
 #include <unistd.h>       /* select */
 #include <pobl/bl_file.h> /* bl_file_set_cloexec */
 #endif
@@ -318,53 +319,29 @@ void ui_event_source_final(void) {
  * the embed pump's behaviour is easy to reason about and the diff
  * against upstream stays small. */
 static void receive_next_event_nonblock(void) {
-  fd_set read_fds;
-  struct timeval tval = { 0, 0 };
-  int maxfd = -1;
-  int ret;
   u_int count;
   ui_display_t **displays;
   u_int num_displays;
   vt_term_t **terms;
   u_int num_terms;
-  int ptyfd;
 
-  FD_ZERO(&read_fds);
+  /* Embed mode is fully in-process: input arrives via the in-process
+   * ring (ui_fb_embed_input -> receive_{key,mouse}_event) and guest
+   * output via write-loopback, neither of which is visible to select().
+   * So there is nothing to poll — drain both directly each pump. This
+   * also keeps the pump free of fd_set/select, which lets it compile on
+   * hosts (Windows) whose select() is socket-only. */
   displays = ui_get_opened_displays(&num_displays);
   for (count = 0; count < num_displays; count++) {
-    int xfd = ui_display_fd(displays[count]);
-    FD_SET(xfd, &read_fds);
-    if (xfd > maxfd) maxfd = xfd;
-  }
-  num_terms = vt_get_all_terms(&terms);
-  for (count = 0; count < num_terms; count++) {
-    ptyfd = vt_term_get_master_fd(terms[count]);
-    if (ptyfd >= 0) {
-      FD_SET(ptyfd, &read_fds);
-      if (ptyfd > maxfd) maxfd = ptyfd;
-      /* Drain any locally-buffered data (e.g. write-loopback)
-       * synchronously — select() won't see it. */
-      if (vt_term_is_sending_data(terms[count])) {
-        vt_term_parse_vt100_sequence(terms[count]);
-      }
-    }
+    ui_display_receive_next_event(displays[count]);
+    /* XXX displays pointer may be reallocated by the dispatch. */
+    displays = ui_get_opened_displays(&num_displays);
   }
 
-  if (maxfd >= 0) {
-    ret = select(maxfd + 1, &read_fds, NULL, NULL, &tval);
-    if (ret > 0) {
-      for (count = 0; count < num_displays; count++) {
-        if (FD_ISSET(ui_display_fd(displays[count]), &read_fds)) {
-          ui_display_receive_next_event(displays[count]);
-          displays = ui_get_opened_displays(&num_displays);
-        }
-      }
-      for (count = 0; count < num_terms; count++) {
-        ptyfd = vt_term_get_master_fd(terms[count]);
-        if (ptyfd >= 0 && FD_ISSET(ptyfd, &read_fds)) {
-          vt_term_parse_vt100_sequence(terms[count]);
-        }
-      }
+  num_terms = vt_get_all_terms(&terms);
+  for (count = 0; count < num_terms; count++) {
+    if (vt_term_is_sending_data(terms[count])) {
+      vt_term_parse_vt100_sequence(terms[count]);
     }
   }
 

@@ -224,7 +224,11 @@ mingw*)
 			;;
 		esac
 	fi
-	if test "$gui" != "sdl2" -a "$gui" != "win32" ; then
+	dnl fb-embed (downstream fork): the framebuffer backend renders to a
+	dnl host-supplied buffer with no /dev/fb0, so it is valid on mingw
+	dnl when --enable-fb-embed is set. Without that flag the upstream
+	dnl rule stands (real fb needs Linux, fall back to win32).
+	if test "$gui" != "sdl2" -a "$gui" != "win32" -a ! \( "$gui" = "fb" -a "x$enable_fb_embed" = "xyes" \) ; then
 		echo "$gui is not supported in ${host_os}. Use win32."
 		gui="win32"
 	fi

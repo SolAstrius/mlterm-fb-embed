@@ -14,13 +14,13 @@
  * ui_fb_embed_attach() before any uitoolkit call; open_display()
  * then populates _display from that registration.
  *
- * For input, this file holds two pipes (kbd_pipe, mouse_pipe). The
- * embedding application calls ui_fb_embed_input() which writes a
- * single struct input_event into the appropriate pipe. The fb event
- * source then reads it on its next iteration through select(), no
- * different from how the upstream linux file handles
- * /dev/input/event* — so we don't have to duplicate the chunky
- * key/mouse translation logic.
+ * For input, the embedding application calls ui_fb_embed_input(),
+ * which enqueues one event into an in-process ring buffer. The fb
+ * event source drains it on its next pump via receive_{key,mouse}_
+ * event(). Embed mode is fully in-process, so the former self-pipe
+ * (a pipe() whose read end was select()'d) was pure overhead — a
+ * lock-free SPSC ring drops both the syscall-per-event and the POSIX
+ * pipe/fcntl dependency that Windows lacks.
  *
  * Files compiled in embed mode that DO NOT include this:
  *   - ui_display.c — bracketed with #ifndef USE_FB_EMBED around the
@@ -31,16 +31,13 @@
  * unit.
  */
 
-#include <errno.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <unistd.h>
+#include <stdatomic.h>
 
 #include "ui_fb_embed.h"
 #include "../ui_event_source.h"   /* ui_event_source_process for the pump */
 
 /* Cross-platform input event constants: just the few we need to
- * route between kbd and mouse pipes. Numerically match Linux evdev
+ * route between kbd and mouse channels. Numerically match Linux evdev
  * so hosts on Linux can pass EV_KEY/EV_REL/BTN_MOUSE/KEY_OK
  * directly; hosts on Mac/Win/BSD use the same constants without
  * needing <linux/input.h>. */
@@ -56,6 +53,53 @@
 #define KEY_OK     0x160
 #endif
 
+/* --- in-process input queue (replaces the former self-pipe) --- */
+
+/* Single-producer (host thread in ui_fb_embed_input) / single-consumer
+ * (pump thread draining via receive_{key,mouse}_event) lock-free ring.
+ * Full = drop, the same back-pressure the non-blocking pipe had. */
+#define EMBED_RING_CAP 256u   /* power of two */
+
+typedef struct {
+  ui_fb_input_event_t buf[EMBED_RING_CAP];
+  _Atomic unsigned head;  /* producer advances */
+  _Atomic unsigned tail;  /* consumer advances */
+} embed_ring_t;
+
+static embed_ring_t kbd_ring;
+static embed_ring_t mouse_ring;
+
+static void ring_push(embed_ring_t *r, const ui_fb_input_event_t *ev) {
+  unsigned head = atomic_load_explicit(&r->head, memory_order_relaxed);
+  unsigned tail = atomic_load_explicit(&r->tail, memory_order_acquire);
+  if (head - tail >= EMBED_RING_CAP) return;  /* full — drop */
+  r->buf[head & (EMBED_RING_CAP - 1)] = *ev;
+  atomic_store_explicit(&r->head, head + 1, memory_order_release);
+}
+
+/* Drain + discard. M0-of-port stub: the linux file's key/mouse
+ * translation (~500 lines per direction) will be lifted into a shared
+ * helper in a follow-up so embed mode can feed these into vt_term;
+ * until then embed-mode events are consumed and dropped, exactly as
+ * the old pipe-draining stub did. Returns the count drained. */
+static int ring_drain(embed_ring_t *r) {
+  unsigned tail = atomic_load_explicit(&r->tail, memory_order_relaxed);
+  unsigned head = atomic_load_explicit(&r->head, memory_order_acquire);
+  int n = 0;
+  for (; tail != head; tail++) {
+    ui_fb_input_event_t ev = r->buf[tail & (EMBED_RING_CAP - 1)];
+    (void)ev;  /* discarded for now — see comment above */
+    n++;
+  }
+  atomic_store_explicit(&r->tail, tail, memory_order_release);
+  return n;
+}
+
+static void ring_reset(embed_ring_t *r) {
+  atomic_store_explicit(&r->head, 0, memory_order_relaxed);
+  atomic_store_explicit(&r->tail, 0, memory_order_relaxed);
+}
+
 /* --- static state --- */
 
 static int console_id = 0;     /* matches the upstream file's variable name */
@@ -65,22 +109,8 @@ static struct {
   int width;
   int height;
   int stride_px;
-  int kbd_pipe[2];   /* [0] read end (consumed by receive_key_event),
-                      * [1] write end (ui_fb_embed_input writes here). */
-  int mouse_pipe[2]; /* same shape, mouse channel. */
   int attached;
-} _embed = { NULL, 0, 0, 0, { -1, -1 }, { -1, -1 }, 0 };
-
-/* --- internal helpers --- */
-
-static int make_pipe(int fds[2]) {
-  if (pipe(fds) < 0) return -1;
-  /* Both ends non-blocking — receive_*_event drains opportunistically,
-   * ui_fb_embed_input must not block the host's UI thread. */
-  fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL, 0) | O_NONBLOCK);
-  fcntl(fds[1], F_SETFL, fcntl(fds[1], F_GETFL, 0) | O_NONBLOCK);
-  return 0;
-}
+} _embed = { NULL, 0, 0, 0, 0 };
 
 /* --- contract required by ui_display.c --- */
 
@@ -90,10 +120,8 @@ static int open_display(u_int depth) {
     return 0;
   }
 
-  if (make_pipe(_embed.kbd_pipe) < 0 || make_pipe(_embed.mouse_pipe) < 0) {
-    bl_error_printf("embed: pipe() failed: %s\n", strerror(errno));
-    return 0;
-  }
+  ring_reset(&kbd_ring);
+  ring_reset(&mouse_ring);
 
   /* Hand the host buffer over to the existing rendering pipeline.
    * fb and fb_base both point at the host buffer; back_fb is unused
@@ -118,7 +146,10 @@ static int open_display(u_int depth) {
   _display.rgbinfo.b_offset =  0; _display.rgbinfo.b_limit = 0;
   _display.rgbinfo.a_offset = 24; _display.rgbinfo.a_limit = 0;
 
-  _display.fd = _embed.kbd_pipe[0];
+  /* Embed input arrives through the in-process ring, not an fd. -1
+   * tells the event source there is nothing to select() on (the pump
+   * drains the ring directly). */
+  _display.fd = -1;
   _disp.display = &_display;
 
   /* Embed mode: no mouse cursor in the rendered buffer (the host
@@ -140,25 +171,10 @@ static int open_display(u_int depth) {
 /* No-op — embed mode doesn't own any host console. */
 static void set_use_console_backscroll(int use) { (void)use; }
 
-/* receive_*_event: drain the pipe and discard. M0-of-port stub —
- * the linux file's translation logic (~500 lines per direction)
- * will be lifted out into a shareable helper in a follow-up commit
- * so embed mode can call it. Until then, embed-mode keystrokes
- * arrive but get dropped on the floor; the dumper test path
- * doesn't exercise input so this is OK to land. */
-static int receive_mouse_event(int fd) {
-  ui_fb_input_event_t ev;
-  int n = 0;
-  while (read(fd, &ev, sizeof(ev)) > 0) { n++; }
-  return n;
-}
-
-static int receive_key_event(int fd) {
-  ui_fb_input_event_t ev;
-  int n = 0;
-  while (read(fd, &ev, sizeof(ev)) > 0) { n++; }
-  return n;
-}
+/* receive_*_event: drain the in-process queue. The fd argument (the
+ * display's former pipe read end) is now always -1 and ignored. */
+static int receive_mouse_event(int fd) { (void)fd; return ring_drain(&mouse_ring); }
+static int receive_key_event(int fd)   { (void)fd; return ring_drain(&kbd_ring); }
 
 /* --- public embed API (declared in ui_fb_embed.h) --- */
 
@@ -175,21 +191,17 @@ int ui_fb_embed_attach(uint32_t *buf, int width, int height, int stride_px) {
    * (gated on DISP_IS_INITED); on a second host attach it
    * returns the existing _disp without re-running open_display(),
    * which would otherwise refresh _display.fb to point at the new
-   * host buffer and reopen the input pipes the host previously
-   * detached. Do it here so the first ui_fb_embed_pump after a
+   * host buffer. Do it here so the first ui_fb_embed_pump after a
    * reattach paints into the right buffer. */
   if (_disp.display == &_display) {
-    if (make_pipe(_embed.kbd_pipe) < 0 || make_pipe(_embed.mouse_pipe) < 0) {
-      bl_error_printf("embed: pipe() reattach failed: %s\n", strerror(errno));
-      _embed.attached = 0;
-      return -1;
-    }
+    ring_reset(&kbd_ring);
+    ring_reset(&mouse_ring);
     _display.fb = _display.fb_base = (unsigned char *)buf;
     _display.smem_len = (size_t)height * stride_px * sizeof(uint32_t);
     _display.line_length = stride_px * sizeof(uint32_t);
     _display.width  = _disp.width  = width;
     _display.height = _disp.height = height;
-    _display.fd = _embed.kbd_pipe[0];
+    _display.fd = -1;
   }
 
   return 0;
@@ -197,10 +209,8 @@ int ui_fb_embed_attach(uint32_t *buf, int width, int height, int stride_px) {
 
 void ui_fb_embed_detach(void) {
   if (!_embed.attached) return;
-  for (int i = 0; i < 2; i++) {
-    if (_embed.kbd_pipe[i]   >= 0) { close(_embed.kbd_pipe[i]);   _embed.kbd_pipe[i]   = -1; }
-    if (_embed.mouse_pipe[i] >= 0) { close(_embed.mouse_pipe[i]); _embed.mouse_pipe[i] = -1; }
-  }
+  ring_reset(&kbd_ring);
+  ring_reset(&mouse_ring);
   _embed.buf = NULL;
   _embed.width = _embed.height = _embed.stride_px = 0;
   _embed.attached = 0;
@@ -216,12 +226,9 @@ void ui_fb_embed_input(int type, int code, int value) {
    * KEY_OK belong to the mouse channel; everything else is keyboard.
    * Crude but matches what evdev's per-device routing produces in
    * practice. */
-  int wfd = (ev.type == EV_REL ||
-             (ev.type == EV_KEY && ev.code >= BTN_MOUSE && ev.code < KEY_OK))
-             ? _embed.mouse_pipe[1]
-             : _embed.kbd_pipe[1];
-  ssize_t r = write(wfd, &ev, sizeof(ev));
-  (void)r;  /* full pipe = host pumping too slowly; drop is fine */
+  int is_mouse = (ev.type == EV_REL ||
+                  (ev.type == EV_KEY && ev.code >= BTN_MOUSE && ev.code < KEY_OK));
+  ring_push(is_mouse ? &mouse_ring : &kbd_ring, &ev);
 }
 
 /* Forward decl — defined in fb/ui_window.c, only visible inside the
