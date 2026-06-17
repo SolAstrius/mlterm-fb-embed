@@ -43,7 +43,7 @@ static u_int num_additional_fds;
 
 /* --- static functions --- */
 
-#ifndef NO_DISPLAY_FD
+#if !defined(NO_DISPLAY_FD) && !defined(USE_FB_EMBED)
 
 static void receive_next_event(void) {
   u_int count;
@@ -294,7 +294,10 @@ static void receive_next_event(void) {
 /* --- global functions --- */
 
 void ui_event_source_init(void) {
-#ifdef USE_WIN32API
+/* The pty-read triggers belong to the win32 GUI backend (and its
+ * vt_pty_win32). The fb backend on Windows (fb-embed) doesn't build
+ * them, so gate on USE_WIN32GUI rather than USE_WIN32API. */
+#ifdef USE_WIN32GUI
   vt_pty_ssh_set_pty_read_trigger(ui_display_trigger_pty_read);
   vt_pty_mosh_set_pty_read_trigger(ui_display_trigger_pty_read);
   vt_pty_win32_set_pty_read_trigger(ui_display_trigger_pty_read);
@@ -302,7 +305,9 @@ void ui_event_source_init(void) {
 }
 
 void ui_event_source_final(void) {
-#ifndef NO_DISPLAY_FD
+/* additional_fds only exists on the select()-based path (declared
+ * under !USE_WIN32API above). */
+#if !defined(NO_DISPLAY_FD) && !defined(USE_WIN32API)
   free(additional_fds);
 #endif
 }
@@ -372,6 +377,24 @@ static void receive_next_event_nonblock(void) {
 #endif
 
 int ui_event_source_process(void) {
+#if defined(USE_FB_EMBED)
+  /* Embed: no pollable fds; the host drives rendering via
+   * ui_fb_embed_pump(). This exists so main_loop.c links — drain
+   * displays + terms directly, with no select() or win32 pty triggers. */
+  u_int num_displays, num_terms, count;
+  ui_display_t **displays;
+  vt_term_t **terms;
+
+  displays = ui_get_opened_displays(&num_displays);
+  for (count = 0; count < num_displays; count++) {
+    ui_display_receive_next_event(displays[count]);
+  }
+  vt_close_dead_terms();
+  num_terms = vt_get_all_terms(&terms);
+  for (count = 0; count < num_terms; count++) {
+    vt_term_parse_vt100_sequence(terms[count]);
+  }
+#else
 #ifdef NO_DISPLAY_FD
   u_int num_displays;
   ui_display_t **displays;
@@ -417,6 +440,7 @@ int ui_event_source_process(void) {
   }
 #endif
 #endif
+#endif /* USE_FB_EMBED */
 
   ui_close_dead_screens();
 

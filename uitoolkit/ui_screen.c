@@ -2270,7 +2270,12 @@ static int shortcut_str(ui_screen_t *screen, KeySym ksym, u_int state, int x, in
           exit(1);
         }
       }
-#else
+#elif defined(USE_WIN32GUI)
+      /* CreateProcess + STARTUPINFO need <windows.h>, which only the
+       * win32 GUI backend pulls in. The fb backend on Windows (fb-embed)
+       * is headless — the host owns process launching — so spawning from
+       * a clicked link is a no-op there rather than dragging windows.h
+       * (and its macro collisions) into the fb build. */
       PROCESS_INFORMATION pi;
       STARTUPINFO si;
 

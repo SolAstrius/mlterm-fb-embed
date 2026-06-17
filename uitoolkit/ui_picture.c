@@ -22,6 +22,7 @@
 #endif
 
 #ifdef HAVE_WINDOWS_H
+#include "ui_undef_x11_masks.h" /* avoid ControlMask &c. clashing with windows.h */
 #include <windows.h> /* for CreateEvent */
 #endif
 

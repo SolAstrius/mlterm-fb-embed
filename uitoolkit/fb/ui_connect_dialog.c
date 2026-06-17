@@ -138,4 +138,18 @@ int ui_connect_dialog(char **uri,      /* Should be free'ed by those who call th
   return 1;
 }
 
+#else /* USE_LIBSSH2 */
+
+#include "../ui.h"               /* Window */
+#include "../ui_connect_dialog.h"
+
+/* ssh disabled (--disable-ssh2): there is no remote-connect prompt. The
+ * symbol must still exist — a Windows DLL resolves every reference at
+ * link time (unlike ELF/Mach-O shared objects, which tolerate undefined
+ * symbols), and ui_screen_manager's caller reads 0 as "cancelled". */
+int ui_connect_dialog(char **uri, char **pass, char **exec_cmd, char **privkey, int *x11_fwd,
+                      char *display_name, Window parent_window, char *default_server) {
+  return 0;
+}
+
 #endif

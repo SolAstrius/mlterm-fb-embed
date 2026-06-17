@@ -432,6 +432,7 @@ static int exec_mlimgloader(char *path, u_int width, u_int height, int keep_aspe
 }
 
 #elif defined(USE_WIN32API)
+#include "../ui_undef_x11_masks.h" /* avoid ControlMask &c. clashing with windows.h */
 #include <windows.h>
 
 static int exec_mlimgloader(char *path, u_int width, u_int height, int keep_aspect,
